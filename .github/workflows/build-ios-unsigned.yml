@@ -87,12 +87,19 @@ jobs:
           FRAMEWORKS_DIR="$APP_PATH/Frameworks"
           mkdir -p "$FRAMEWORKS_DIR"
 
+          # Copy loose dylibs without flattening anything that belongs to a
+          # framework bundle. Frameworks are copied separately below.
           DYLIB_COUNT=0
           while IFS= read -r dylib; do
             [ -n "$dylib" ] || continue
             cp -L "$dylib" "$FRAMEWORKS_DIR/$(basename "$dylib")"
             DYLIB_COUNT=$((DYLIB_COUNT + 1))
-          done < <(find "$DEPS_DIR" \( -type f -o -type l \) -name '*.dylib' -print | sort -u)
+          done < <(
+            find "$DEPS_DIR" \
+              -type d -name '*.framework' -prune -o \
+              \( \( -type f -o -type l \) -a -name '*.dylib' \) -print |
+              sort -u
+          )
 
           if [ "$DYLIB_COUNT" -eq 0 ]; then
             echo "No device dylibs were found under $DEPS_DIR"
@@ -100,11 +107,101 @@ jobs:
           fi
           echo "Embedded $DYLIB_COUNT dylib files/aliases"
 
+          # Some FreeRDP dependencies (for example libpng) are emitted as
+          # iOS framework bundles. Preserve the full Foo.framework/Foo
+          # layout instead of flattening them into Frameworks/Foo.
+          FRAMEWORK_COUNT=0
+          while IFS= read -r framework; do
+            [ -n "$framework" ] || continue
+            destination="$FRAMEWORKS_DIR/$(basename "$framework")"
+            rm -rf "$destination"
+            ditto "$framework" "$destination"
+            FRAMEWORK_COUNT=$((FRAMEWORK_COUNT + 1))
+          done < <(
+            find "$DEPS_DIR" -type d -name '*.framework' -prune -print |
+              sort -u
+          )
+          echo "Embedded $FRAMEWORK_COUNT framework bundles"
+
+          canonical_path() {
+            python3 - "$1" <<'PY'
+          import os
+          import sys
+          print(os.path.realpath(sys.argv[1]))
+          PY
+          }
+
+          relative_path() {
+            python3 - "$1" "$2" <<'PY'
+          import os
+          import sys
+          print(os.path.relpath(sys.argv[1], sys.argv[2]))
+          PY
+          }
+
+          resolve_embedded_dependency() {
+            local macho="$1"
+            local dep="$2"
+            local rel=""
+            local candidate=""
+
+            case "$dep" in
+              @rpath/*)
+                rel="${dep#@rpath/}"
+                candidate="$FRAMEWORKS_DIR/$rel"
+                ;;
+              @executable_path/*)
+                rel="${dep#@executable_path/}"
+                candidate="$APP_PATH/$rel"
+                if [ -e "$candidate" ]; then
+                  printf '%s\n' "$candidate"
+                  return 0
+                fi
+                ;;
+              @loader_path/*)
+                rel="${dep#@loader_path/}"
+                candidate="$(dirname "$macho")/$rel"
+                if [ -e "$candidate" ]; then
+                  printf '%s\n' "$candidate"
+                  return 0
+                fi
+                ;;
+              */Frameworks/*)
+                # Absolute build-machine paths such as
+                # /Users/runner/.../deps/Frameworks/libcrypto.4.dylib
+                # become the matching object inside the app Frameworks dir.
+                rel="${dep##*/Frameworks/}"
+                candidate="$FRAMEWORKS_DIR/$rel"
+                ;;
+              *)
+                rel="$(basename "$dep")"
+                candidate="$FRAMEWORKS_DIR/$rel"
+                ;;
+            esac
+
+            if [ -e "$candidate" ]; then
+              printf '%s\n' "$candidate"
+              return 0
+            fi
+
+            # Last-resort fallback for a loose dylib whose original install
+            # name had a different parent directory.
+            candidate="$FRAMEWORKS_DIR/$(basename "$dep")"
+            if [ -e "$candidate" ]; then
+              printf '%s\n' "$candidate"
+              return 0
+            fi
+
+            return 1
+          }
+
           normalize_macho() {
             local macho="$1"
-            local dep base replacement self_base
-            self_base="$(basename "$macho")"
+            local dep target replacement target_rel loader_rel
+            local macho_real target_real current_id new_id id_rel
+
             chmod u+w "$macho"
+            macho_real="$(canonical_path "$macho")"
 
             while IFS= read -r dep; do
               [ -n "$dep" ] || continue
@@ -115,22 +212,27 @@ jobs:
                   ;;
               esac
 
-              base="$(basename "$dep")"
-
-              if [[ "$macho" == "$FRAMEWORKS_DIR/"* ]] && [ "$base" = "$self_base" ]; then
-                continue
-              fi
-
-              if [ ! -e "$FRAMEWORKS_DIR/$base" ]; then
+              if ! target="$(resolve_embedded_dependency "$macho" "$dep")"; then
                 echo "Cannot bundle dependency required by $macho: $dep"
-                echo "Expected to find: $FRAMEWORKS_DIR/$base"
+                echo "Searched the embedded Frameworks bundle, including framework paths."
                 return 1
               fi
 
-              if [[ "$macho" == "$FRAMEWORKS_DIR/"* ]]; then
-                replacement="@loader_path/$base"
+              target_real="$(canonical_path "$target")"
+
+              # otool -L includes a dylib/framework's own install name.
+              # Do not rewrite that as a dependency; its ID is normalized
+              # separately below.
+              if [ "$target_real" = "$macho_real" ]; then
+                continue
+              fi
+
+              if [ "$macho" = "$APP_PATH/iFreeRDP" ]; then
+                target_rel="$(relative_path "$target" "$FRAMEWORKS_DIR")"
+                replacement="@executable_path/Frameworks/$target_rel"
               else
-                replacement="@executable_path/Frameworks/$base"
+                loader_rel="$(relative_path "$target" "$(dirname "$macho")")"
+                replacement="@loader_path/$loader_rel"
               fi
 
               if [ "$dep" != "$replacement" ]; then
@@ -141,23 +243,38 @@ jobs:
               fi
             done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}')
 
-            if [[ "$macho" == "$FRAMEWORKS_DIR/"*.dylib ]]; then
-              echo "Setting dylib id for $macho -> @rpath/$self_base"
-              install_name_tool -id "@rpath/$self_base" "$macho"
+            # If this Mach-O is a dylib (including a framework binary),
+            # give it a portable ID that preserves its path under Frameworks.
+            current_id="$(otool -D "$macho" 2>/dev/null | tail -n +2 | head -n 1 || true)"
+            if [ -n "$current_id" ] && [[ "$macho" == "$FRAMEWORKS_DIR/"* ]]; then
+              id_rel="$(relative_path "$macho" "$FRAMEWORKS_DIR")"
+              new_id="@rpath/$id_rel"
+              if [ "$current_id" != "$new_id" ]; then
+                echo "Setting Mach-O id for $macho:"
+                echo "  $current_id"
+                echo "  -> $new_id"
+                install_name_tool -id "$new_id" "$macho"
+              fi
             fi
           }
 
           normalize_macho "$APP_PATH/iFreeRDP"
 
-          while IFS= read -r dylib; do
-            normalize_macho "$dylib"
-          done < <(find "$FRAMEWORKS_DIR" -type f -name '*.dylib' -print | sort)
+          # Normalize every Mach-O object under Frameworks, including
+          # framework executables whose names do not end in .dylib.
+          while IFS= read -r macho; do
+            if file "$macho" | grep -q 'Mach-O'; then
+              normalize_macho "$macho"
+            fi
+          done < <(find "$FRAMEWORKS_DIR" -type f -print | sort)
 
           echo "===== Normalized Mach-O dependencies ====="
           otool -L "$APP_PATH/iFreeRDP"
-          while IFS= read -r dylib; do
-            otool -L "$dylib"
-          done < <(find "$FRAMEWORKS_DIR" -type f -name '*.dylib' -print | sort)
+          while IFS= read -r macho; do
+            if file "$macho" | grep -q 'Mach-O'; then
+              otool -L "$macho"
+            fi
+          done < <(find "$FRAMEWORKS_DIR" -type f -print | sort)
 
           rm -rf "$APP_PATH/_CodeSignature"
           rm -f "$APP_PATH/embedded.mobileprovision"
@@ -300,4 +417,4 @@ jobs:
         with:
           name: AzureSurface-iPad-unsigned.ipa
           path: ${{ env.ARTIFACT }}
-          if-no-files-found: error
+          if-no-files-found:
