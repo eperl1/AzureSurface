@@ -106,6 +106,10 @@ jobs:
           echo "===== Scene manifest ====="
           /usr/libexec/PlistBuddy -c "Print :UIApplicationSceneManifest" "$PLIST"
 
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
+
           DEPS_DIR="$GITHUB_WORKSPACE/freerdp-upstream/build/ios-device/deps"
           FRAMEWORKS_DIR="$APP_PATH/Frameworks"
           mkdir -p "$FRAMEWORKS_DIR"
