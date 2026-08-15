@@ -48,3 +48,19 @@ if old in text:
 
 path.write_text(text, encoding="utf-8")
 PY
+
+python3 - "$ROOT/client/iOS" <<'PY'
+import pathlib
+import re
+import sys
+
+ios_root = pathlib.Path(sys.argv[1])
+files = list(ios_root.rglob("*.m"))
+pattern = re.compile(r"\bnullptr\b")
+
+for file_path in files:
+    text = file_path.read_text(encoding="utf-8")
+    updated = pattern.sub("NULL", text)
+    if updated != text:
+        file_path.write_text(updated, encoding="utf-8")
+PY
