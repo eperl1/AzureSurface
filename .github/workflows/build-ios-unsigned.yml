@@ -21,6 +21,23 @@ jobs:
       - name: Apply SurfaceMode overlay
         run: bash ios/scripts/apply-freerdp-overlay.sh "$GITHUB_WORKSPACE/freerdp-upstream"
 
+      - name: Patch upstream iOS resource packaging
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("freerdp-upstream/client/iOS/CMakeLists.txt")
+          text = path.read_text(encoding="utf-8")
+          marker = "add_dependencies(${PROJECT_NAME} freerdp)"
+          addition = "target_sources(${PROJECT_NAME} PRIVATE ${RESOURCES})\n\n"
+
+          if addition.strip() not in text:
+              if marker not in text:
+                  raise SystemExit("Could not find iFreeRDP resource-patch insertion point")
+              text = text.replace(marker, addition + marker, 1)
+              path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Configure unsigned device build
         run: |
           cmake -S freerdp-upstream/client/iOS \
@@ -31,11 +48,12 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
+            -DCMAKE_XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS="@executable_path/Frameworks" \
             -G Xcode
 
       - name: Build unsigned app for physical iOS device
         run: |
-          XCODEPROJ="$(find freerdp-upstream/build/ios-device -name 'iFreeRDP.xcodeproj' | head -n 1)"
+          XCODEPROJ="$(find freerdp-upstream/build/ios-device -name 'iFreeRDP.xcodeproj' -print -quit)"
           if [ -z "$XCODEPROJ" ]; then
             echo "Failed to locate the generated Xcode project"
             exit 1
@@ -48,23 +66,163 @@ jobs:
             build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            LD_RUNPATH_SEARCH_PATHS='$(inherited) @executable_path/Frameworks'
 
-      - name: Package unsigned IPA
+      - name: Assemble and validate unsigned app
         run: |
-          APP_PATH="$(find freerdp-upstream/build/ios-device -type d -name 'iFreeRDP.app' | head -n 1)"
+          set -euo pipefail
+
+          APP_PATH="$(find freerdp-upstream/build/ios-device -type d -path '*/Release-iphoneos/iFreeRDP.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "Failed to locate the built iFreeRDP.app bundle"
+            echo "Failed to locate the final Release-iphoneos/iFreeRDP.app bundle"
+            echo "All iFreeRDP.app candidates were:"
+            find freerdp-upstream/build/ios-device -type d -name 'iFreeRDP.app' -print || true
             exit 1
           fi
 
-          IPA_ROOT="$RUNNER_TEMP/unsigned-ipa"
-          rm -rf "$IPA_ROOT"
-          mkdir -p "$IPA_ROOT/Payload"
-          cp -R "$APP_PATH" "$IPA_ROOT/Payload/iFreeRDP.app"
+          echo "Using final device app: $APP_PATH"
 
+          # FreeRDP 3.30.0's standalone iOS build deliberately creates
+          # @rpath shared libraries. Embed every produced device dylib so
+          # KSign can sign the complete self-contained bundle later.
+          DEPS_DIR="$GITHUB_WORKSPACE/freerdp-upstream/build/ios-device/deps"
+          FRAMEWORKS_DIR="$APP_PATH/Frameworks"
+          mkdir -p "$FRAMEWORKS_DIR"
+
+          DYLIB_COUNT=0
+          while IFS= read -r dylib; do
+            [ -n "$dylib" ] || continue
+            cp -L "$dylib" "$FRAMEWORKS_DIR/$(basename "$dylib")"
+            DYLIB_COUNT=$((DYLIB_COUNT + 1))
+          done < <(find "$DEPS_DIR" \( -type f -o -type l \) -name '*.dylib' -print | sort -u)
+
+          if [ "$DYLIB_COUNT" -eq 0 ]; then
+            echo "No device dylibs were found under $DEPS_DIR"
+            exit 1
+          fi
+          echo "Embedded $DYLIB_COUNT dylib files/aliases"
+
+          rm -rf "$APP_PATH/_CodeSignature"
+          rm -f "$APP_PATH/embedded.mobileprovision"
+
+          validate_app() {
+            local app="$1"
+            local executable="$app/iFreeRDP"
+            local plist="$app/Info.plist"
+
+            echo "===== Validating $app ====="
+            find "$app" -type f -print | sort
+
+            if [ ! -f "$executable" ]; then
+              echo "Missing iFreeRDP executable"
+              return 1
+            fi
+            if [ ! -f "$plist" ]; then
+              echo "Missing Info.plist"
+              return 1
+            fi
+
+            file "$executable"
+            if ! lipo -info "$executable" | grep -q 'arm64'; then
+              echo "iFreeRDP executable is not arm64"
+              return 1
+            fi
+
+            BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
+            if [ "$BUNDLE_ID" != "com.freerdp.ifreerdp" ]; then
+              echo "Unexpected bundle identifier: $BUNDLE_ID"
+              return 1
+            fi
+
+            PLATFORM="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$plist")"
+            if [ "$PLATFORM" != "iPhoneOS" ]; then
+              echo "Expected iPhoneOS bundle, got: $PLATFORM"
+              return 1
+            fi
+
+            for resource in MainWindow BookmarkListView RDPSessionView CredentialsInputView; do
+              if ! find "$app" \( -name "${resource}.nib" -o -name "${resource}.xib" \) -print -quit | grep -q .; then
+                echo "Missing required UI resource: $resource"
+                return 1
+              fi
+            done
+
+            PNG_COUNT="$(find "$app" -type f -iname '*.png' | wc -l | tr -d '[:space:]')"
+            if [ "$PNG_COUNT" -lt 10 ]; then
+              echo "Expected bundled PNG resources, found only $PNG_COUNT"
+              return 1
+            fi
+            echo "Found $PNG_COUNT PNG resources"
+
+            if ! otool -l "$executable" | grep -A3 LC_RPATH | grep -q '@executable_path/Frameworks'; then
+              echo "Missing @executable_path/Frameworks runtime search path"
+              return 1
+            fi
+
+            local macho dep rel resolved
+            while IFS= read -r macho; do
+              if ! file "$macho" | grep -q 'Mach-O'; then
+                continue
+              fi
+
+              if ! lipo -info "$macho" | grep -q 'arm64'; then
+                echo "Non-arm64 Mach-O in app: $macho"
+                return 1
+              fi
+
+              echo "Dependencies for $macho:"
+              otool -L "$macho"
+
+              while IFS= read -r dep; do
+                [ -n "$dep" ] || continue
+                case "$dep" in
+                  /System/Library/*|/usr/lib/*)
+                    ;;
+                  @rpath/*)
+                    rel="${dep#@rpath/}"
+                    if [ -e "$app/Frameworks/$rel" ]; then
+                      resolved="$app/Frameworks/$rel"
+                    elif [ -e "$app/$rel" ]; then
+                      resolved="$app/$rel"
+                    else
+                      echo "Missing @rpath dependency required by $macho: $dep"
+                      return 1
+                    fi
+                    echo "Resolved $dep -> $resolved"
+                    ;;
+                  @executable_path/*)
+                    rel="${dep#@executable_path/}"
+                    if [ ! -e "$app/$rel" ]; then
+                      echo "Missing @executable_path dependency required by $macho: $dep"
+                      return 1
+                    fi
+                    ;;
+                  @loader_path/*)
+                    rel="${dep#@loader_path/}"
+                    if [ ! -e "$(dirname "$macho")/$rel" ]; then
+                      echo "Missing @loader_path dependency required by $macho: $dep"
+                      return 1
+                    fi
+                    ;;
+                  /*)
+                    echo "Unexpected non-system absolute dependency required by $macho: $dep"
+                    return 1
+                    ;;
+                esac
+              done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}')
+            done < <(find "$app" -type f -print | sort)
+          }
+
+          validate_app "$APP_PATH"
+
+          IPA_ROOT="$RUNNER_TEMP/unsigned-ipa"
           IPA_PATH="$RUNNER_TEMP/AzureSurface-iPad-unsigned.ipa"
+          rm -rf "$IPA_ROOT" "$RUNNER_TEMP/ipa-check"
           rm -f "$IPA_PATH"
+          mkdir -p "$IPA_ROOT/Payload"
+          ditto "$APP_PATH" "$IPA_ROOT/Payload/iFreeRDP.app"
+
           (
             cd "$IPA_ROOT"
             /usr/bin/zip -qry "$IPA_PATH" Payload
@@ -74,6 +232,10 @@ jobs:
             echo "Failed to create unsigned IPA"
             exit 1
           fi
+
+          mkdir -p "$RUNNER_TEMP/ipa-check"
+          unzip -q "$IPA_PATH" -d "$RUNNER_TEMP/ipa-check"
+          validate_app "$RUNNER_TEMP/ipa-check/Payload/iFreeRDP.app"
 
           echo "ARTIFACT=$IPA_PATH" >> "$GITHUB_ENV"
 
