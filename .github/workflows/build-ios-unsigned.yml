@@ -21,79 +21,10 @@ jobs:
       - name: Apply SurfaceMode overlay
         run: bash ios/scripts/apply-freerdp-overlay.sh "$GITHUB_WORKSPACE/freerdp-upstream"
 
-      - name: Force SurfaceMode settings integration
+      - name: Integrate SurfaceMode Settings subclass
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          ios = Path("freerdp-upstream/client/iOS")
-          header = ios / "SurfaceMode/AppSettingsController+SurfaceMode.h"
-          impl = ios / "SurfaceMode/AppSettingsController+SurfaceMode.m"
-          scene = ios / "SceneDelegate.m"
-
-          h = header.read_text(encoding="utf-8")
-          if "+ (void)installSurfaceModeIntegration;" not in h:
-              h = h.replace(
-                  "@interface AppSettingsController (SurfaceMode)\n",
-                  "@interface AppSettingsController (SurfaceMode)\n\n+ (void)installSurfaceModeIntegration;\n",
-                  1,
-              )
-              header.write_text(h, encoding="utf-8")
-
-          m = impl.read_text(encoding="utf-8")
-          start = m.find("+ (void)load\n{")
-          end = m.find("\n+ (void)swizzleSelector:", start)
-          if "+ (void)installSurfaceModeIntegration" not in m:
-              if start < 0 or end < 0:
-                  raise SystemExit("Could not find SurfaceMode +load block")
-              replacement = (
-                  "static dispatch_once_t SurfaceModeInstallOnce;\n\n"
-                  "+ (void)load\n"
-                  "{\n"
-                  "    [self installSurfaceModeIntegration];\n"
-                  "}\n\n"
-                  "+ (void)installSurfaceModeIntegration\n"
-                  "{\n"
-                  "    dispatch_once(&SurfaceModeInstallOnce, ^{\n"
-                  "        [self swizzleSelector:@selector(viewDidLoad) with:@selector(sm_viewDidLoad)];\n"
-                  "        [self swizzleSelector:@selector(dealloc) with:@selector(sm_dealloc)];\n"
-                  "        [self swizzleSelector:@selector(numberOfSectionsInTableView:) with:@selector(sm_numberOfSectionsInTableView:)];\n"
-                  "        [self swizzleSelector:@selector(tableView:numberOfRowsInSection:) with:@selector(sm_tableView:numberOfRowsInSection:)];\n"
-                  "        [self swizzleSelector:@selector(tableView:titleForHeaderInSection:) with:@selector(sm_tableView:titleForHeaderInSection:)];\n"
-                  "        [self swizzleSelector:@selector(tableView:cellForRowAtIndexPath:) with:@selector(sm_tableView:cellForRowAtIndexPath:)];\n"
-                  "        [self swizzleSelector:@selector(tableView:didSelectRowAtIndexPath:) with:@selector(sm_tableView:didSelectRowAtIndexPath:)];\n"
-                  "    });\n"
-                  "}\n"
-              )
-              m = m[:start] + replacement + m[end:]
-              impl.write_text(m, encoding="utf-8")
-
-          s = scene.read_text(encoding="utf-8")
-          import_marker = '#import "AppSettingsController.h"\n'
-          import_line = '#import "SurfaceMode/AppSettingsController+SurfaceMode.h"\n'
-          if import_line not in s:
-              if import_marker not in s:
-                  raise SystemExit("Could not find SceneDelegate import point")
-              s = s.replace(import_marker, import_marker + import_line, 1)
-
-          create_marker = "\t// create app settings view and navigation controller\n\tAppSettingsController *appSettingsController =\n"
-          create_replacement = (
-              "\t// Force SurfaceMode hooks before the Settings controller is created.\n"
-              "\t[AppSettingsController installSurfaceModeIntegration];\n\n"
-              + create_marker
-          )
-          if "[AppSettingsController installSurfaceModeIntegration];" not in s:
-              if create_marker not in s:
-                  raise SystemExit("Could not find SceneDelegate settings creation point")
-              s = s.replace(create_marker, create_replacement, 1)
-
-          scene.write_text(s, encoding="utf-8")
-
-          assert "+ (void)installSurfaceModeIntegration;" in header.read_text(encoding="utf-8")
-          assert "+ (void)installSurfaceModeIntegration" in impl.read_text(encoding="utf-8")
-          assert "[AppSettingsController installSurfaceModeIntegration];" in scene.read_text(encoding="utf-8")
-          print("SurfaceMode settings integration forced successfully")
-          PY
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBiYXNlNjQKaW9zPVBhdGgoImZyZWVyZHAtdXBzdHJlYW0vY2xpZW50L2lPUyIpCnNkPWlvcy8iU3VyZmFjZU1vZGUiCnNkLm1rZGlyKGV4aXN0X29rPVRydWUpCihzZC8iU3VyZmFjZU1vZGVBcHBTZXR0aW5nc0NvbnRyb2xsZXIuaCIpLndyaXRlX2J5dGVzKGJhc2U2NC5iNjRkZWNvZGUoIkkybHRjRzl5ZENBaVFYQndVMlYwZEdsdVozTkRiMjUwY205c2JHVnlMbWdpQ2dwQWFXNTBaWEptWVdObElGTjFjbVpoWTJWTmIyUmxRWEJ3VTJWMGRHbHVaM05EYjI1MGNtOXNiR1Z5SURvZ1FYQndVMlYwZEdsdVozTkRiMjUwY205c2JHVnlJRHhWU1ZSbGVIUkdhV1ZzWkVSbGJHVm5ZWFJsUGdwQVpXNWtDZz09IikpCihzZC8iU3VyZmFjZU1vZGVBcHBTZXR0aW5nc0NvbnRyb2xsZXIubSIpLndyaXRlX2J5dGVzKGJhc2U2NC5iNjRkZWNvZGUoIkkybHRjRzl5ZENBaVUzVnlabUZqWlUxdlpHVkJjSEJUWlhSMGFXNW5jME52Ym5SeWIyeHNaWEl1YUNJS0kybHRjRzl5ZENBaVJXUnBkRUoxZEhSdmJsUmhZbXhsVm1sbGQwTmxiR3d1YUNJS0kybHRjRzl5ZENBaVJXUnBkRk5sWTNKbGRGUmxlSFJVWVdKc1pWWnBaWGREWld4c0xtZ2lDaU5wYlhCdmNuUWdJa1ZrYVhSVVpYaDBWR0ZpYkdWV2FXVjNRMlZzYkM1b0lnb2phVzF3YjNKMElDSlRkWEptWVdObFRXOWtaVU52Ym5SeWIyeERiR2xsYm5RdWFDSUtJMmx0Y0c5eWRDQWlVM1Z5Wm1GalpVMXZaR1ZUWlhSMGFXNW5jeTVvSWdvamFXMXdiM0owSUNKVGRYSm1ZV05sVFc5a1pWTjBZWFIxYzBObGJuUmxjaTVvSWdvamFXMXdiM0owSUNKVmRHbHNjeTVvSWdvS2MzUmhkR2xqSUU1VFNXNTBaV2RsY2lCamIyNXpkQ0JUZFhKbVlXTmxUVzlrWlZObFkzUnBiMjRnUFNBeU93b0tRR2x0Y0d4bGJXVnVkR0YwYVc5dUlGTjFjbVpoWTJWTmIyUmxRWEJ3VTJWMGRHbHVaM05EYjI1MGNtOXNiR1Z5Q2dvdElDaE9VMGx1ZEdWblpYSXBiblZ0WW1WeVQyWlRaV04wYVc5dWMwbHVWR0ZpYkdWV2FXVjNPaWhWU1ZSaFlteGxWbWxsZHlBcUtYUmhZbXhsVm1sbGR3cDdDaUFnSUNCeVpYUjFjbTRnVzNOMWNHVnlJRzUxYldKbGNrOW1VMlZqZEdsdmJuTkpibFJoWW14bFZtbGxkenAwWVdKc1pWWnBaWGRkSUNzZ01Uc0tmUW9LTFNBb1RsTkpiblJsWjJWeUtYUmhZbXhsVm1sbGR6b29WVWxVWVdKc1pWWnBaWGNnS2lsMFlXSnNaVlpwWlhjZ2JuVnRZbVZ5VDJaU2IzZHpTVzVUWldOMGFXOXVPaWhPVTBsdWRHVm5aWElwYzJWamRHbHZiZ3A3Q2lBZ0lDQnBaaUFvYzJWamRHbHZiaUE5UFNCVGRYSm1ZV05sVFc5a1pWTmxZM1JwYjI0cENpQWdJQ0FnSUNBZ2NtVjBkWEp1SURVN0NpQWdJQ0J5WlhSMWNtNGdXM04xY0dWeUlIUmhZbXhsVm1sbGR6cDBZV0pzWlZacFpYY2diblZ0WW1WeVQyWlNiM2R6U1c1VFpXTjBhVzl1T25ObFkzUnBiMjVkT3dwOUNnb3RJQ2hPVTFOMGNtbHVaeUFxS1hSaFlteGxWbWxsZHpvb1ZVbFVZV0pzWlZacFpYY2dLaWwwWVdKc1pWWnBaWGNnZEdsMGJHVkdiM0pJWldGa1pYSkpibE5sWTNScGIyNDZLRTVUU1c1MFpXZGxjaWx6WldOMGFXOXVDbnNLSUNBZ0lHbG1JQ2h6WldOMGFXOXVJRDA5SUZOMWNtWmhZMlZOYjJSbFUyVmpkR2x2YmlrS0lDQWdJQ0FnSUNCeVpYUjFjbTRnUUNKVGRYSm1ZV05sSUUxdlpHVWdRMjl1ZEhKdmJDSTdDaUFnSUNCeVpYUjFjbTRnVzNOMWNHVnlJSFJoWW14bFZtbGxkenAwWVdKc1pWWnBaWGNnZEdsMGJHVkdiM0pJWldGa1pYSkpibE5sWTNScGIyNDZjMlZqZEdsdmJsMDdDbjBLQ2kwZ0tGVkpWR0ZpYkdWV2FXVjNRMlZzYkNBcUtYUmhZbXhsVm1sbGR6b29WVWxVWVdKc1pWWnBaWGNnS2lsMFlXSnNaVlpwWlhjZ1kyVnNiRVp2Y2xKdmQwRjBTVzVrWlhoUVlYUm9PaWhPVTBsdVpHVjRVR0YwYUNBcUtXbHVaR1Y0VUdGMGFBcDdDaUFnSUNCcFppQW9hVzVrWlhoUVlYUm9Mbk5sWTNScGIyNGdJVDBnVTNWeVptRmpaVTF2WkdWVFpXTjBhVzl1S1FvZ0lDQWdJQ0FnSUhKbGRIVnliaUJiYzNWd1pYSWdkR0ZpYkdWV2FXVjNPblJoWW14bFZtbGxkeUJqWld4c1JtOXlVbTkzUVhSSmJtUmxlRkJoZEdnNmFXNWtaWGhRWVhSb1hUc0tDaUFnSUNCcFppQW9hVzVrWlhoUVlYUm9Mbkp2ZHlBOVBTQTBLUW9nSUNBZ2V3b2dJQ0FnSUNBZ0lITjBZWFJwWXlCT1UxTjBjbWx1WnlBcWFXUmxiblJwWm1sbGNpQTlJRUFpVTNWeVptRmpaVTF2WkdWVGRHRjBkWE5EWld4c0lqc0tJQ0FnSUNBZ0lDQlZTVlJoWW14bFZtbGxkME5sYkd3Z0ttTmxiR3dnUFNCYmRHRmliR1ZXYVdWM0lHUmxjWFZsZFdWU1pYVnpZV0pzWlVObGJHeFhhWFJvU1dSbGJuUnBabWxsY2pwcFpHVnVkR2xtYVdWeVhUc0tJQ0FnSUNBZ0lDQnBaaUFvWTJWc2JDQTlQU0J1YVd3cENpQWdJQ0FnSUNBZ2V3b2dJQ0FnSUNBZ0lDQWdJQ0JqWld4c0lEMGdXMXRiVlVsVVlXSnNaVlpwWlhkRFpXeHNJR0ZzYkc5alhTQnBibWwwVjJsMGFGTjBlV3hsT2xWSlZHRmliR1ZXYVdWM1EyVnNiRk4wZVd4bFUzVmlkR2wwYkdVZ2NtVjFjMlZKWkdWdWRHbG1hV1Z5T21sa1pXNTBhV1pwWlhKZElHRjFkRzl5Wld4bFlYTmxYVHNLSUNBZ0lDQWdJQ0FnSUNBZ1kyVnNiQzV6Wld4bFkzUnBiMjVUZEhsc1pTQTlJRlZKVkdGaWJHVldhV1YzUTJWc2JGTmxiR1ZqZEdsdmJsTjBlV3hsVG05dVpUc0tJQ0FnSUNBZ0lDQjlDaUFnSUNBZ0lDQWdVM1Z5Wm1GalpVMXZaR1ZUZEdGMGRYTkRaVzUwWlhJZ0tuTjBZWFIxY3lBOUlGdFRkWEptWVdObFRXOWtaVk4wWVhSMWMwTmxiblJsY2lCemFHRnlaV1JEWlc1MFpYSmRPd29nSUNBZ0lDQWdJR05sYkd3dWRHVjRkRXhoWW1Wc0xuUmxlSFFnUFNCemRHRjBkWE11YzNSaGRIVnpWR1Y0ZERzS0lDQWdJQ0FnSUNCalpXeHNMbVJsZEdGcGJGUmxlSFJNWVdKbGJDNTBaWGgwSUQwZ2MzUmhkSFZ6TG1SbGRHRnBiRlJsZUhRN0NpQWdJQ0FnSUNBZ2NtVjBkWEp1SUdObGJHdzdDaUFnSUNCOUNnb2dJQ0FnVGxOVGRISnBibWNnS21sa1pXNTBhV1pwWlhJZ1BTQlVZV0pzWlVObGJHeEpaR1Z1ZEdsbWFXVnlWR1Y0ZERzS0lDQWdJR2xtSUNocGJtUmxlRkJoZEdndWNtOTNJRDA5SURJcENpQWdJQ0FnSUNBZ2FXUmxiblJwWm1sbGNpQTlJRlJoWW14bFEyVnNiRWxrWlc1MGFXWnBaWEpUWldOeVpYUlVaWGgwT3dvZ0lDQWdaV3h6WlNCcFppQW9hVzVrWlhoUVlYUm9Mbkp2ZHlBOVBTQXpLUW9nSUNBZ0lDQWdJR2xrWlc1MGFXWnBaWElnUFNCVVlXSnNaVU5sYkd4SlpHVnVkR2xtYVdWeVFuVjBkRzl1T3dvS0lDQWdJRlZKVkdGaWJHVldhV1YzUTJWc2JDQXFZMlZzYkNBOUlGdHpaV3htSUhSaFlteGxWbWxsZDBObGJHeEdjbTl0U1dSbGJuUnBabWxsY2pwcFpHVnVkR2xtYVdWeVhUc0tDaUFnSUNCcFppQW9hVzVrWlhoUVlYUm9Mbkp2ZHlBOVBTQXpLUW9nSUNBZ2V3b2dJQ0FnSUNBZ0lFVmthWFJDZFhSMGIyNVVZV0pzWlZacFpYZERaV3hzSUNwaWRYUjBiMjVEWld4c0lEMGdLRVZrYVhSQ2RYUjBiMjVVWVdKc1pWWnBaWGREWld4c0lDb3BZMlZzYkRzS0lDQWdJQ0FnSUNCaWRYUjBiMjVEWld4c0xteGhZbVZzTG5SbGVIUWdQU0JBSWxSbGMzUWdRMjl1Ym1WamRHbHZiaUk3Q2lBZ0lDQWdJQ0FnVzJKMWRIUnZia05sYkd3dVluVjBkRzl1SUhObGRGUnBkR3hsT2tBaVUyVnVaQ0JRU1U1SElpQm1iM0pUZEdGMFpUcFZTVU52Ym5SeWIyeFRkR0YwWlU1dmNtMWhiRjA3Q2lBZ0lDQWdJQ0FnVzJKMWRIUnZia05sYkd3dVluVjBkRzl1SUhKbGJXOTJaVlJoY21kbGREcHVhV3dnWVdOMGFXOXVPazVWVEV3Z1ptOXlRMjl1ZEhKdmJFVjJaVzUwY3pwVlNVTnZiblJ5YjJ4RmRtVnVkRUZzYkVWMlpXNTBjMTA3Q2lBZ0lDQWdJQ0FnVzJKMWRIUnZia05sYkd3dVluVjBkRzl1SUdGa1pGUmhjbWRsZERwelpXeG1JR0ZqZEdsdmJqcEFjMlZzWldOMGIzSW9jM1Z5Wm1GalpVMXZaR1ZVWlhOMFEyOXVibVZqZEdsdmJsUmhjSEJsWkRvcElHWnZja052Ym5SeWIyeEZkbVZ1ZEhNNlZVbERiMjUwY205c1JYWmxiblJVYjNWamFGVndTVzV6YVdSbFhUc0tJQ0FnSUNBZ0lDQnlaWFIxY200Z1kyVnNiRHNLSUNBZ0lIMEtDaUFnSUNCRlpHbDBWR1Y0ZEZSaFlteGxWbWxsZDBObGJHd2dLblJsZUhSRFpXeHNJRDBnS0VWa2FYUlVaWGgwVkdGaWJHVldhV1YzUTJWc2JDQXFLV05sYkd3N0NpQWdJQ0IwWlhoMFEyVnNiQzUwWlhoMFptbGxiR1F1WkdWc1pXZGhkR1VnUFNCelpXeG1Pd29nSUNBZ2RHVjRkRU5sYkd3dWRHVjRkR1pwWld4a0xuUmhaeUE5SUVkRlZGOVVRVWNvVTNWeVptRmpaVTF2WkdWVFpXTjBhVzl1TENCcGJtUmxlRkJoZEdndWNtOTNLVHNLQ2lBZ0lDQnBaaUFvYVc1a1pYaFFZWFJvTG5KdmR5QTlQU0F3S1FvZ0lDQWdld29nSUNBZ0lDQWdJSFJsZUhSRFpXeHNMbXhoWW1Wc0xuUmxlSFFnUFNCQUlsZHBibVJ2ZDNNZ1ZrMGdTRzl6ZEc1aGJXVWdMeUJKVUNJN0NpQWdJQ0FnSUNBZ2RHVjRkRU5sYkd3dWRHVjRkR1pwWld4a0xuQnNZV05sYUc5c1pHVnlJRDBnUUNJeE1EQXVlQzU0TG5nZ2IzSWdhRzl6ZEc1aGJXVWlPd29nSUNBZ0lDQWdJSFJsZUhSRFpXeHNMblJsZUhSbWFXVnNaQzUwWlhoMElEMGdXMU4xY21aaFkyVk5iMlJsVTJWMGRHbHVaM01nYUc5emRGMDdDaUFnSUNBZ0lDQWdkR1Y0ZEVObGJHd3VkR1Y0ZEdacFpXeGtMbUYxZEc5allYQnBkR0ZzYVhwaGRHbHZibFI1Y0dVZ1BTQlZTVlJsZUhSQmRYUnZZMkZ3YVhSaGJHbDZZWFJwYjI1VWVYQmxUbTl1WlRzS0lDQWdJQ0FnSUNCMFpYaDBRMlZzYkM1MFpYaDBabWxsYkdRdVlYVjBiMk52Y25KbFkzUnBiMjVVZVhCbElEMGdWVWxVWlhoMFFYVjBiMk52Y25KbFkzUnBiMjVVZVhCbFRtODdDaUFnSUNCOUNpQWdJQ0JsYkhObElHbG1JQ2hwYm1SbGVGQmhkR2d1Y205M0lEMDlJREVwQ2lBZ0lDQjdDaUFnSUNBZ0lDQWdkR1Y0ZEVObGJHd3ViR0ZpWld3dWRHVjRkQ0E5SUVBaVEyOXVkSEp2YkNCUWIzSjBJanNLSUNBZ0lDQWdJQ0IwWlhoMFEyVnNiQzUwWlhoMFptbGxiR1F1YTJWNVltOWhjbVJVZVhCbElEMGdWVWxMWlhsaWIyRnlaRlI1Y0dWT2RXMWlaWEpRWVdRN0NpQWdJQ0FnSUNBZ2RHVjRkRU5sYkd3dWRHVjRkR1pwWld4a0xuQnNZV05sYUc5c1pHVnlJRDBnUUNJME56ZzRPU0k3Q2lBZ0lDQWdJQ0FnZEdWNGRFTmxiR3d1ZEdWNGRHWnBaV3hrTG5SbGVIUWdQU0JiVGxOVGRISnBibWNnYzNSeWFXNW5WMmwwYUVadmNtMWhkRHBBSWlWc1pDSXNJQ2hzYjI1bktWdFRkWEptWVdObFRXOWtaVk5sZEhScGJtZHpJSEJ2Y25SZFhUc0tJQ0FnSUgwS0lDQWdJR1ZzYzJVZ2FXWWdLR2x1WkdWNFVHRjBhQzV5YjNjZ1BUMGdNaWtLSUNBZ0lIc0tJQ0FnSUNBZ0lDQkZaR2wwVTJWamNtVjBWR1Y0ZEZSaFlteGxWbWxsZDBObGJHd2dLbk5sWTNKbGRFTmxiR3dnUFNBb1JXUnBkRk5sWTNKbGRGUmxlSFJVWVdKc1pWWnBaWGREWld4c0lDb3BZMlZzYkRzS0lDQWdJQ0FnSUNCelpXTnlaWFJEWld4c0xteGhZbVZzTG5SbGVIUWdQU0JBSWtGMWRHaGxiblJwWTJGMGFXOXVJRlJ2YTJWdUlqc0tJQ0FnSUNBZ0lDQnpaV055WlhSRFpXeHNMblJsZUhSbWFXVnNaQzV3YkdGalpXaHZiR1JsY2lBOUlFQWlVM1J2Y21Wa0lHbHVJRXRsZVdOb1lXbHVJanNLSUNBZ0lDQWdJQ0J6WldOeVpYUkRaV3hzTG5SbGVIUm1hV1ZzWkM1MFpYaDBJRDBnVzFOMWNtWmhZMlZOYjJSbFUyVjBkR2x1WjNNZ2RHOXJaVzVkT3dvZ0lDQWdJQ0FnSUhObFkzSmxkRU5sYkd3dWRHVjRkR1pwWld4a0xuTmxZM1Z5WlZSbGVIUkZiblJ5ZVNBOUlGbEZVenNLSUNBZ0lIMEtDaUFnSUNCYmMyVnNaaUJoWkdwMWMzUkZaR2wwVkdWNGRGUmhZbXhsVm1sbGQwTmxiR3c2S0VWa2FYUlVaWGgwVkdGaWJHVldhV1YzUTJWc2JDQXFLV05sYkd4ZE93b2dJQ0FnY21WMGRYSnVJR05sYkd3N0NuMEtDaTBnS0hadmFXUXBkR0ZpYkdWV2FXVjNPaWhWU1ZSaFlteGxWbWxsZHlBcUtYUmhZbXhsVm1sbGR5QmthV1JUWld4bFkzUlNiM2RCZEVsdVpHVjRVR0YwYURvb1RsTkpibVJsZUZCaGRHZ2dLaWxwYm1SbGVGQmhkR2dLZXdvZ0lDQWdhV1lnS0dsdVpHVjRVR0YwYUM1elpXTjBhVzl1SUQwOUlGTjFjbVpoWTJWTmIyUmxVMlZqZEdsdmJpa0tJQ0FnSUhzS0lDQWdJQ0FnSUNCYmRHRmliR1ZXYVdWM0lHUmxjMlZzWldOMFVtOTNRWFJKYm1SbGVGQmhkR2c2YVc1a1pYaFFZWFJvSUdGdWFXMWhkR1ZrT2xsRlUxMDdDaUFnSUNBZ0lDQWdXM05sYkdZdWRtbGxkeUJsYm1SRlpHbDBhVzVuT2xsRlUxMDdDaUFnSUNBZ0lDQWdhV1lnS0dsdVpHVjRVR0YwYUM1eWIzY2dQVDBnTXlrS0lDQWdJQ0FnSUNBZ0lDQWdXM05sYkdZZ2MzVnlabUZqWlUxdlpHVlVaWE4wUTI5dWJtVmpkR2x2YmxSaGNIQmxaRHB1YVd4ZE93b2dJQ0FnSUNBZ0lISmxkSFZ5YmpzS0lDQWdJSDBLSUNBZ0lGdHpkWEJsY2lCMFlXSnNaVlpwWlhjNmRHRmliR1ZXYVdWM0lHUnBaRk5sYkdWamRGSnZkMEYwU1c1a1pYaFFZWFJvT21sdVpHVjRVR0YwYUYwN0NuMEtDaTBnS0hadmFXUXBjM1Z5Wm1GalpVMXZaR1ZVWlhOMFEyOXVibVZqZEdsdmJsUmhjSEJsWkRvb2FXUXBjMlZ1WkdWeUNuc0tJQ0FnSUNoMmIybGtLWE5sYm1SbGNqc0tJQ0FnSUZ0elpXeG1MblpwWlhjZ1pXNWtSV1JwZEdsdVp6cFpSVk5kT3dvZ0lDQWdXMXRUZFhKbVlXTmxUVzlrWlVOdmJuUnliMnhEYkdsbGJuUWdjMmhoY21Wa1EyeHBaVzUwWFNCMFpYTjBRMjl1Ym1WamRHbHZibDA3Q2lBZ0lDQmJjMlZzWmk1MFlXSnNaVlpwWlhjZ2NtVnNiMkZrVTJWamRHbHZibk02VzA1VFNXNWtaWGhUWlhRZ2FXNWtaWGhUWlhSWGFYUm9TVzVrWlhnNlUzVnlabUZqWlUxdlpHVlRaV04wYVc5dVhTQjNhWFJvVW05M1FXNXBiV0YwYVc5dU9sVkpWR0ZpYkdWV2FXVjNVbTkzUVc1cGJXRjBhVzl1VG05dVpWMDdDbjBLQ2kwZ0tIWnZhV1FwZEdWNGRFWnBaV3hrUkdsa1JXNWtSV1JwZEdsdVp6b29WVWxVWlhoMFJtbGxiR1FnS2lsMFpYaDBSbWxsYkdRS2V3b2dJQ0FnYzNkcGRHTm9JQ2gwWlhoMFJtbGxiR1F1ZEdGbktRb2dJQ0FnZXdvZ0lDQWdJQ0FnSUdOaGMyVWdSMFZVWDFSQlJ5aFRkWEptWVdObFRXOWtaVk5sWTNScGIyNHNJREFwT2lCYlUzVnlabUZqWlUxdlpHVlRaWFIwYVc1bmN5QnpaWFJJYjNOME9uUmxlSFJHYVdWc1pDNTBaWGgwWFRzZ1luSmxZV3M3Q2lBZ0lDQWdJQ0FnWTJGelpTQkhSVlJmVkVGSEtGTjFjbVpoWTJWTmIyUmxVMlZqZEdsdmJpd2dNU2s2SUZ0VGRYSm1ZV05sVFc5a1pWTmxkSFJwYm1keklITmxkRkJ2Y25RNlczUmxlSFJHYVdWc1pDNTBaWGgwSUdsdWRHVm5aWEpXWVd4MVpWMWRPeUJpY21WaGF6c0tJQ0FnSUNBZ0lDQmpZWE5sSUVkRlZGOVVRVWNvVTNWeVptRmpaVTF2WkdWVFpXTjBhVzl1TENBeUtUb2dXMU4xY21aaFkyVk5iMlJsVTJWMGRHbHVaM01nYzJWMFZHOXJaVzQ2ZEdWNGRFWnBaV3hrTG5SbGVIUmRPeUJpY21WaGF6c0tJQ0FnSUNBZ0lDQmtaV1poZFd4ME9pQmljbVZoYXpzS0lDQWdJSDBLZlFvS0xTQW9RazlQVENsMFpYaDBSbWxsYkdSVGFHOTFiR1JTWlhSMWNtNDZLRlZKVkdWNGRFWnBaV3hrSUNvcGRHVjRkRVpwWld4a0Nuc0tJQ0FnSUZ0MFpYaDBSbWxsYkdRZ2NtVnphV2R1Um1seWMzUlNaWE53YjI1a1pYSmRPd29nSUNBZ2NtVjBkWEp1SUZsRlV6c0tmUW9LUUdWdVpBbz0iKSkKY209aW9zLyJDTWFrZUxpc3RzLnR4dCIKYz1jbS5yZWFkX3RleHQoKQpjPWMucmVwbGFjZSgiICAgIFN1cmZhY2VNb2RlL0FwcFNldHRpbmdzQ29udHJvbGxlcitTdXJmYWNlTW9kZS5oXG4iLCAiIikKYz1jLnJlcGxhY2UoIiAgICBTdXJmYWNlTW9kZS9BcHBTZXR0aW5nc0NvbnRyb2xsZXIrU3VyZmFjZU1vZGUubVxuIiwgIiIpCmFuY2hvcj0iICAgIFN1cmZhY2VNb2RlL1N1cmZhY2VNb2RlQm9vdHN0cmFwLmhcbiIKYWRkPSIgICAgU3VyZmFjZU1vZGUvU3VyZmFjZU1vZGVBcHBTZXR0aW5nc0NvbnRyb2xsZXIuaFxuICAgIFN1cmZhY2VNb2RlL1N1cmZhY2VNb2RlQXBwU2V0dGluZ3NDb250cm9sbGVyLm1cbiIKaWYgIlN1cmZhY2VNb2RlL1N1cmZhY2VNb2RlQXBwU2V0dGluZ3NDb250cm9sbGVyLm0iIG5vdCBpbiBjOgogICAgaWYgYW5jaG9yIG5vdCBpbiBjOiByYWlzZSBTeXN0ZW1FeGl0KCJDTWFrZSBhbmNob3IgbWlzc2luZyIpCiAgICBjPWMucmVwbGFjZShhbmNob3IsIGFkZCthbmNob3IsMSkKY20ud3JpdGVfdGV4dChjKQpzY2VuZT1pb3MvIlNjZW5lRGVsZWdhdGUubSIKcz1zY2VuZS5yZWFkX3RleHQoKQpzPXMucmVwbGFjZSgnI2ltcG9ydCAiQXBwU2V0dGluZ3NDb250cm9sbGVyLmgiXG4nLCAnI2ltcG9ydCAiQXBwU2V0dGluZ3NDb250cm9sbGVyLmgiXG4jaW1wb3J0ICJTdXJmYWNlTW9kZS9TdXJmYWNlTW9kZUFwcFNldHRpbmdzQ29udHJvbGxlci5oIlxuJywxKQpzPXMucmVwbGFjZSgnW1tbQXBwU2V0dGluZ3NDb250cm9sbGVyIGFsbG9jXSBpbml0V2l0aFN0eWxlOlVJVGFibGVWaWV3U3R5bGVHcm91cGVkXSBhdXRvcmVsZWFzZV0nLCAnW1tbU3VyZmFjZU1vZGVBcHBTZXR0aW5nc0NvbnRyb2xsZXIgYWxsb2NdIGluaXRXaXRoU3R5bGU6VUlUYWJsZVZpZXdTdHlsZUdyb3VwZWRdIGF1dG9yZWxlYXNlXScsMSkKc2NlbmUud3JpdGVfdGV4dChzKQphc3NlcnQgIlN1cmZhY2VNb2RlQXBwU2V0dGluZ3NDb250cm9sbGVyIGFsbG9jIiBpbiBzCmFzc2VydCAiU3VyZmFjZU1vZGUvU3VyZmFjZU1vZGVBcHBTZXR0aW5nc0NvbnRyb2xsZXIubSIgaW4gYwphc3NlcnQgIlN1cmZhY2VNb2RlL0FwcFNldHRpbmdzQ29udHJvbGxlcitTdXJmYWNlTW9kZS5tIiBub3QgaW4gYwpwcmludCgiU3VyZmFjZU1vZGUgU2V0dGluZ3Mgc3ViY2xhc3MgaW5zdGFsbGVkIikK' | base64 --decode > /tmp/surface_settings_patch.py
+          python3 /tmp/surface_settings_patch.py
 
       - name: Patch upstream iOS resource packaging
         run: |
