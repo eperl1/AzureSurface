@@ -11,11 +11,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build tools
-        run: |
-          brew update
-          brew install cmake ninja pkg-config nasm python3
-
       - name: Clone FreeRDP
         run: git clone --depth 1 --branch 3.30.0 https://github.com/FreeRDP/FreeRDP.git freerdp-upstream
 
