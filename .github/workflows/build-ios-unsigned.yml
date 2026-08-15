@@ -413,14 +413,19 @@ jobs:
             fi
             echo "Scene delegate configured: $SCENE_DELEGATE"
 
-            if ! strings "$executable" | grep -q "Surface Mode Control"; then
+            STRINGS_FILE="$(mktemp)"
+            strings "$executable" > "$STRINGS_FILE"
+            if ! grep -Fq "Surface Mode Control" "$STRINGS_FILE"; then
               echo "Surface Mode UI strings are missing from executable"
+              rm -f "$STRINGS_FILE"
               return 1
             fi
-            if ! strings "$executable" | grep -q "Send PING"; then
+            if ! grep -Fq "Send PING" "$STRINGS_FILE"; then
               echo "Surface Mode PING UI is missing from executable"
+              rm -f "$STRINGS_FILE"
               return 1
             fi
+            rm -f "$STRINGS_FILE"
             echo "Surface Mode UI strings found in executable"
 
             for resource in MainWindow BookmarkListView RDPSessionView CredentialsInputView; do
