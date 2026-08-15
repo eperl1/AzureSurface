@@ -46,26 +46,25 @@ jobs:
           if "+ (void)installSurfaceModeIntegration" not in m:
               if start < 0 or end < 0:
                   raise SystemExit("Could not find SurfaceMode +load block")
-              replacement = '''static dispatch_once_t SurfaceModeInstallOnce;
-
-+ (void)load
-{
-    [self installSurfaceModeIntegration];
-}
-
-+ (void)installSurfaceModeIntegration
-{
-    dispatch_once(&SurfaceModeInstallOnce, ^{
-        [self swizzleSelector:@selector(viewDidLoad) with:@selector(sm_viewDidLoad)];
-        [self swizzleSelector:@selector(dealloc) with:@selector(sm_dealloc)];
-        [self swizzleSelector:@selector(numberOfSectionsInTableView:) with:@selector(sm_numberOfSectionsInTableView:)];
-        [self swizzleSelector:@selector(tableView:numberOfRowsInSection:) with:@selector(sm_tableView:numberOfRowsInSection:)];
-        [self swizzleSelector:@selector(tableView:titleForHeaderInSection:) with:@selector(sm_tableView:titleForHeaderInSection:)];
-        [self swizzleSelector:@selector(tableView:cellForRowAtIndexPath:) with:@selector(sm_tableView:cellForRowAtIndexPath:)];
-        [self swizzleSelector:@selector(tableView:didSelectRowAtIndexPath:) with:@selector(sm_tableView:didSelectRowAtIndexPath:)];
-    });
-}
-'''
+              replacement = (
+                  "static dispatch_once_t SurfaceModeInstallOnce;\n\n"
+                  "+ (void)load\n"
+                  "{\n"
+                  "    [self installSurfaceModeIntegration];\n"
+                  "}\n\n"
+                  "+ (void)installSurfaceModeIntegration\n"
+                  "{\n"
+                  "    dispatch_once(&SurfaceModeInstallOnce, ^{\n"
+                  "        [self swizzleSelector:@selector(viewDidLoad) with:@selector(sm_viewDidLoad)];\n"
+                  "        [self swizzleSelector:@selector(dealloc) with:@selector(sm_dealloc)];\n"
+                  "        [self swizzleSelector:@selector(numberOfSectionsInTableView:) with:@selector(sm_numberOfSectionsInTableView:)];\n"
+                  "        [self swizzleSelector:@selector(tableView:numberOfRowsInSection:) with:@selector(sm_tableView:numberOfRowsInSection:)];\n"
+                  "        [self swizzleSelector:@selector(tableView:titleForHeaderInSection:) with:@selector(sm_tableView:titleForHeaderInSection:)];\n"
+                  "        [self swizzleSelector:@selector(tableView:cellForRowAtIndexPath:) with:@selector(sm_tableView:cellForRowAtIndexPath:)];\n"
+                  "        [self swizzleSelector:@selector(tableView:didSelectRowAtIndexPath:) with:@selector(sm_tableView:didSelectRowAtIndexPath:)];\n"
+                  "    });\n"
+                  "}\n"
+              )
               m = m[:start] + replacement + m[end:]
               impl.write_text(m, encoding="utf-8")
 
@@ -77,8 +76,12 @@ jobs:
                   raise SystemExit("Could not find SceneDelegate import point")
               s = s.replace(import_marker, import_marker + import_line, 1)
 
-          create_marker = '\t// create app settings view and navigation controller\n\tAppSettingsController *appSettingsController =\n'
-          create_replacement = '\t// Force SurfaceMode hooks before the Settings controller is created.\n\t[AppSettingsController installSurfaceModeIntegration];\n\n' + create_marker
+          create_marker = "\t// create app settings view and navigation controller\n\tAppSettingsController *appSettingsController =\n"
+          create_replacement = (
+              "\t// Force SurfaceMode hooks before the Settings controller is created.\n"
+              "\t[AppSettingsController installSurfaceModeIntegration];\n\n"
+              + create_marker
+          )
           if "[AppSettingsController installSurfaceModeIntegration];" not in s:
               if create_marker not in s:
                   raise SystemExit("Could not find SceneDelegate settings creation point")
