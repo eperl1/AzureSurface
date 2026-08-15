@@ -83,9 +83,6 @@ jobs:
 
           echo "Using final device app: $APP_PATH"
 
-          # FreeRDP 3.30.0's standalone iOS build deliberately creates
-          # @rpath shared libraries. Embed every produced device dylib so
-          # KSign can sign the complete self-contained bundle later.
           DEPS_DIR="$GITHUB_WORKSPACE/freerdp-upstream/build/ios-device/deps"
           FRAMEWORKS_DIR="$APP_PATH/Frameworks"
           mkdir -p "$FRAMEWORKS_DIR"
@@ -102,6 +99,65 @@ jobs:
             exit 1
           fi
           echo "Embedded $DYLIB_COUNT dylib files/aliases"
+
+          normalize_macho() {
+            local macho="$1"
+            local dep base replacement self_base
+            self_base="$(basename "$macho")"
+            chmod u+w "$macho"
+
+            while IFS= read -r dep; do
+              [ -n "$dep" ] || continue
+
+              case "$dep" in
+                /System/Library/*|/usr/lib/*)
+                  continue
+                  ;;
+              esac
+
+              base="$(basename "$dep")"
+
+              if [[ "$macho" == "$FRAMEWORKS_DIR/"* ]] && [ "$base" = "$self_base" ]; then
+                continue
+              fi
+
+              if [ ! -e "$FRAMEWORKS_DIR/$base" ]; then
+                echo "Cannot bundle dependency required by $macho: $dep"
+                echo "Expected to find: $FRAMEWORKS_DIR/$base"
+                return 1
+              fi
+
+              if [[ "$macho" == "$FRAMEWORKS_DIR/"* ]]; then
+                replacement="@loader_path/$base"
+              else
+                replacement="@executable_path/Frameworks/$base"
+              fi
+
+              if [ "$dep" != "$replacement" ]; then
+                echo "Rewriting dependency in $macho:"
+                echo "  $dep"
+                echo "  -> $replacement"
+                install_name_tool -change "$dep" "$replacement" "$macho"
+              fi
+            done < <(otool -L "$macho" | tail -n +2 | awk '{print $1}')
+
+            if [[ "$macho" == "$FRAMEWORKS_DIR/"*.dylib ]]; then
+              echo "Setting dylib id for $macho -> @rpath/$self_base"
+              install_name_tool -id "@rpath/$self_base" "$macho"
+            fi
+          }
+
+          normalize_macho "$APP_PATH/iFreeRDP"
+
+          while IFS= read -r dylib; do
+            normalize_macho "$dylib"
+          done < <(find "$FRAMEWORKS_DIR" -type f -name '*.dylib' -print | sort)
+
+          echo "===== Normalized Mach-O dependencies ====="
+          otool -L "$APP_PATH/iFreeRDP"
+          while IFS= read -r dylib; do
+            otool -L "$dylib"
+          done < <(find "$FRAMEWORKS_DIR" -type f -name '*.dylib' -print | sort)
 
           rm -rf "$APP_PATH/_CodeSignature"
           rm -f "$APP_PATH/embedded.mobileprovision"
