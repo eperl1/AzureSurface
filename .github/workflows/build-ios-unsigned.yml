@@ -21,6 +21,77 @@ jobs:
       - name: Apply SurfaceMode overlay
         run: bash ios/scripts/apply-freerdp-overlay.sh "$GITHUB_WORKSPACE/freerdp-upstream"
 
+      - name: Force SurfaceMode settings integration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ios = Path("freerdp-upstream/client/iOS")
+          header = ios / "SurfaceMode/AppSettingsController+SurfaceMode.h"
+          impl = ios / "SurfaceMode/AppSettingsController+SurfaceMode.m"
+          scene = ios / "SceneDelegate.m"
+
+          h = header.read_text(encoding="utf-8")
+          if "+ (void)installSurfaceModeIntegration;" not in h:
+              h = h.replace(
+                  "@interface AppSettingsController (SurfaceMode)\n",
+                  "@interface AppSettingsController (SurfaceMode)\n\n+ (void)installSurfaceModeIntegration;\n",
+                  1,
+              )
+              header.write_text(h, encoding="utf-8")
+
+          m = impl.read_text(encoding="utf-8")
+          start = m.find("+ (void)load\n{")
+          end = m.find("\n+ (void)swizzleSelector:", start)
+          if "+ (void)installSurfaceModeIntegration" not in m:
+              if start < 0 or end < 0:
+                  raise SystemExit("Could not find SurfaceMode +load block")
+              replacement = '''static dispatch_once_t SurfaceModeInstallOnce;
+
++ (void)load
+{
+    [self installSurfaceModeIntegration];
+}
+
++ (void)installSurfaceModeIntegration
+{
+    dispatch_once(&SurfaceModeInstallOnce, ^{
+        [self swizzleSelector:@selector(viewDidLoad) with:@selector(sm_viewDidLoad)];
+        [self swizzleSelector:@selector(dealloc) with:@selector(sm_dealloc)];
+        [self swizzleSelector:@selector(numberOfSectionsInTableView:) with:@selector(sm_numberOfSectionsInTableView:)];
+        [self swizzleSelector:@selector(tableView:numberOfRowsInSection:) with:@selector(sm_tableView:numberOfRowsInSection:)];
+        [self swizzleSelector:@selector(tableView:titleForHeaderInSection:) with:@selector(sm_tableView:titleForHeaderInSection:)];
+        [self swizzleSelector:@selector(tableView:cellForRowAtIndexPath:) with:@selector(sm_tableView:cellForRowAtIndexPath:)];
+        [self swizzleSelector:@selector(tableView:didSelectRowAtIndexPath:) with:@selector(sm_tableView:didSelectRowAtIndexPath:)];
+    });
+}
+'''
+              m = m[:start] + replacement + m[end:]
+              impl.write_text(m, encoding="utf-8")
+
+          s = scene.read_text(encoding="utf-8")
+          import_marker = '#import "AppSettingsController.h"\n'
+          import_line = '#import "SurfaceMode/AppSettingsController+SurfaceMode.h"\n'
+          if import_line not in s:
+              if import_marker not in s:
+                  raise SystemExit("Could not find SceneDelegate import point")
+              s = s.replace(import_marker, import_marker + import_line, 1)
+
+          create_marker = '\t// create app settings view and navigation controller\n\tAppSettingsController *appSettingsController =\n'
+          create_replacement = '\t// Force SurfaceMode hooks before the Settings controller is created.\n\t[AppSettingsController installSurfaceModeIntegration];\n\n' + create_marker
+          if "[AppSettingsController installSurfaceModeIntegration];" not in s:
+              if create_marker not in s:
+                  raise SystemExit("Could not find SceneDelegate settings creation point")
+              s = s.replace(create_marker, create_replacement, 1)
+
+          scene.write_text(s, encoding="utf-8")
+
+          assert "+ (void)installSurfaceModeIntegration;" in header.read_text(encoding="utf-8")
+          assert "+ (void)installSurfaceModeIntegration" in impl.read_text(encoding="utf-8")
+          assert "[AppSettingsController installSurfaceModeIntegration];" in scene.read_text(encoding="utf-8")
+          print("SurfaceMode settings integration forced successfully")
+          PY
+
       - name: Patch upstream iOS resource packaging
         run: |
           python3 - <<'PY'
@@ -82,6 +153,24 @@ jobs:
           fi
 
           echo "Using final device app: $APP_PATH"
+
+          # CMake's generic MACOSX_BUNDLE Info.plist does not emit the
+          # UIApplicationSceneManifest that FreeRDP 3.30's SceneDelegate
+          # requires. Without it, AppDelegate launches but never creates a
+          # UIWindow, leaving the physical iPad on a black screen.
+          PLIST="$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Delete :UIApplicationSceneManifest" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes bool false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneConfigurationName string 'Default Configuration'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName string SceneDelegate" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneClassName string UIWindowScene" "$PLIST"
+
+          echo "===== Scene manifest ====="
+          /usr/libexec/PlistBuddy -c "Print :UIApplicationSceneManifest" "$PLIST"
 
           DEPS_DIR="$GITHUB_WORKSPACE/freerdp-upstream/build/ios-device/deps"
           FRAMEWORKS_DIR="$APP_PATH/Frameworks"
@@ -314,6 +403,23 @@ jobs:
               return 1
             fi
 
+            SCENE_DELEGATE="$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "$plist" 2>/dev/null || true)"
+            if [ "$SCENE_DELEGATE" != "SceneDelegate" ]; then
+              echo "Missing/incorrect iOS scene delegate configuration: $SCENE_DELEGATE"
+              return 1
+            fi
+            echo "Scene delegate configured: $SCENE_DELEGATE"
+
+            if ! strings "$executable" | grep -q "Surface Mode Control"; then
+              echo "Surface Mode UI strings are missing from executable"
+              return 1
+            fi
+            if ! strings "$executable" | grep -q "Send PING"; then
+              echo "Surface Mode PING UI is missing from executable"
+              return 1
+            fi
+            echo "Surface Mode UI strings found in executable"
+
             for resource in MainWindow BookmarkListView RDPSessionView CredentialsInputView; do
               if ! find "$app" \( -name "${resource}.nib" -o -name "${resource}.xib" \) -print -quit | grep -q .; then
                 echo "Missing required UI resource: $resource"
@@ -417,4 +523,4 @@ jobs:
         with:
           name: AzureSurface-iPad-unsigned.ipa
           path: ${{ env.ARTIFACT }}
-          if-no-files-found:
+          if-no-files-found: error
