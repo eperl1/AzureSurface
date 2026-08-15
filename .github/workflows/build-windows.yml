@@ -1,0 +1,52 @@
+name: build-windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore windows/SurfaceModeReceiver/SurfaceModeReceiver.sln
+
+      - name: Test
+        run: dotnet test windows/SurfaceModeReceiver/SurfaceModeReceiver.sln --configuration Release --no-restore
+
+      - name: Publish
+        run: |
+          dotnet publish windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfaceModeReceiver.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained false `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o $env:RUNNER_TEMP\SurfaceModeReceiver-publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'SurfaceModeReceiver.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'SurfaceModeReceiver-publish\*') -DestinationPath $zip
+          "ARTIFACT=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SurfaceModeReceiver.zip
+          path: ${{ env.ARTIFACT }}
+          if-no-files-found: error

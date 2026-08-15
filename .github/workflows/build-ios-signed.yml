@@ -1,0 +1,135 @@
+name: build-ios-signed
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          brew update
+          brew install cmake ninja pkg-config nasm python3
+
+      - name: Clone FreeRDP
+        run: git clone --depth 1 --branch 3.30.0 https://github.com/FreeRDP/FreeRDP.git freerdp-upstream
+
+      - name: Apply SurfaceMode overlay
+        run: bash ios/scripts/apply-freerdp-overlay.sh "$GITHUB_WORKSPACE/freerdp-upstream"
+
+      - name: Prepare signing keychain
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.APPLE_PROVISIONING_PROFILE_SPECIFIER }}
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+        run: |
+          set -euo pipefail
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/surface-mode-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/apple-cert.p12"
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          PROFILE_PATH="$PROFILE_DIR/${APPLE_PROVISIONING_PROFILE_SPECIFIER}.mobileprovision"
+
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
+          mkdir -p "$PROFILE_DIR"
+          echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Apple Development|Apple Distribution|iPhone Developer|iPhone Distribution/ { print $2; exit }')"
+          if [ -z "$IDENTITY" ]; then
+            echo "Could not find a signing identity after import."
+            exit 1
+          fi
+
+          cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>${APPLE_DEVELOPMENT_TEAM}</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.freerdp.ifreerdp</key>
+              <string>${APPLE_PROVISIONING_PROFILE_SPECIFIER}</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+          {
+            echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+            echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD"
+            echo "IDENTITY=$IDENTITY"
+            echo "EXPORT_OPTIONS=$RUNNER_TEMP/exportOptions.plist"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure device build
+        run: |
+          cmake -S freerdp-upstream/client/iOS \
+            -B freerdp-upstream/build/ios-device \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/freerdp-upstream/cmake/ios.toolchain.cmake" \
+            -DPLATFORM=OS64 \
+            -DDEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="${{ secrets.APPLE_DEVELOPMENT_TEAM }}" \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Manual \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="$IDENTITY" \
+            -G Xcode
+
+      - name: Archive signed app
+        run: |
+          XCODEPROJ="$(find freerdp-upstream/build/ios-device -name 'iFreeRDP.xcodeproj' | head -n 1)"
+          if [ -z "$XCODEPROJ" ]; then
+            echo "Failed to locate the generated Xcode project"
+            exit 1
+          fi
+          xcodebuild -project "$XCODEPROJ" \
+            -scheme iFreeRDP \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/iFreeRDP.xcarchive" \
+            archive \
+            DEVELOPMENT_TEAM="${{ secrets.APPLE_DEVELOPMENT_TEAM }}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="${{ secrets.APPLE_PROVISIONING_PROFILE_SPECIFIER }}"
+
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/iFreeRDP.xcarchive" \
+            -exportPath "$RUNNER_TEMP/ipa-export" \
+            -exportOptionsPlist "$EXPORT_OPTIONS"
+          IPA_PATH="$(find "$RUNNER_TEMP/ipa-export" -name '*.ipa' | head -n 1)"
+          if [ -z "$IPA_PATH" ]; then
+            echo "Failed to find exported IPA"
+            exit 1
+          fi
+          echo "ARTIFACT=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AzureSurface-iPad.ipa
+          path: ${{ env.ARTIFACT }}
+          if-no-files-found: error
