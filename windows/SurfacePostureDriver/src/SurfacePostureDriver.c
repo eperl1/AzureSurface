@@ -10,10 +10,11 @@
 #define SURFACE_POSTURE_CHILD_LOCATION_TEXT L"Surface Posture Driver"
 #define SURFACE_POSTURE_LOCALE_ID 0x0409
 
-static VOID SurfacePosturePublishChild(_In_ WDFDEVICE Device)
+static NTSTATUS SurfacePosturePublishChild(_In_ WDFDEVICE Device)
 {
     WDFCHILDLIST childList = WdfFdoGetDefaultChildList(Device);
     SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION childDescription;
+    NTSTATUS status;
 
     WDF_CHILD_IDENTIFICATION_DESCRIPTION_HEADER_INIT(
         &childDescription.Header,
@@ -21,11 +22,24 @@ static VOID SurfacePosturePublishChild(_In_ WDFDEVICE Device)
     childDescription.ChildIndex = SURFACE_POSTURE_CHILD_INDEX;
 
     WdfChildListBeginScan(childList);
-    (VOID)WdfChildListAddOrUpdateChildDescriptionAsPresent(childList, &childDescription.Header, NULL);
+    status = WdfChildListAddOrUpdateChildDescriptionAsPresent(
+        childList,
+        &childDescription.Header,
+        NULL);
     WdfChildListEndScan(childList);
+
+    KdPrintEx((
+        DPFLTR_IHVDRIVER_ID,
+        DPFLTR_INFO_LEVEL,
+        "SurfacePostureDriver: add child status 0x%08X\n",
+        status));
+
+    return status;
 }
 
-static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit, _Out_ WDFDEVICE* ChildDevice)
+static NTSTATUS SurfacePostureInitializeChildInit(
+    _In_ PWDFDEVICE_INIT ChildInit,
+    _Out_ WDFDEVICE* ChildDevice)
 {
     UNICODE_STRING deviceId;
     UNICODE_STRING hardwareId;
@@ -34,6 +48,8 @@ static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit
     UNICODE_STRING deviceText;
     UNICODE_STRING locationText;
     WDF_PDO_EVENT_CALLBACKS pdoCallbacks;
+    WDF_OBJECT_ATTRIBUTES childAttributes;
+    NTSTATUS status;
 
     RtlInitUnicodeString(&deviceId, SURFACE_POSTURE_CHILD_DEVICE_ID);
     RtlInitUnicodeString(&hardwareId, SURFACE_POSTURE_CHILD_HARDWARE_ID);
@@ -46,7 +62,7 @@ static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit
     WdfPdoInitSetEventCallbacks(ChildInit, &pdoCallbacks);
     WdfPdoInitSetDefaultLocale(ChildInit, SURFACE_POSTURE_LOCALE_ID);
 
-    NTSTATUS status = WdfPdoInitAssignDeviceID(ChildInit, &deviceId);
+    status = WdfPdoInitAssignDeviceID(ChildInit, &deviceId);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -70,26 +86,27 @@ static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit
         return status;
     }
 
-    status = WdfPdoInitAddDeviceText(ChildInit, &deviceText, &locationText, SURFACE_POSTURE_LOCALE_ID);
+    status = WdfPdoInitAddDeviceText(
+        ChildInit,
+        &deviceText,
+        &locationText,
+        SURFACE_POSTURE_LOCALE_ID);
     if (!NT_SUCCESS(status))
     {
         return status;
     }
 
-    WDF_OBJECT_ATTRIBUTES childAttributes;
     WDF_OBJECT_ATTRIBUTES_INIT(&childAttributes);
-
     status = WdfDeviceCreate(&ChildInit, &childAttributes, ChildDevice);
     if (!NT_SUCCESS(status))
     {
-        KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-            "SurfacePostureDriver: failed to create child PDO status=0x%08X\n",
-            status));
         return status;
     }
 
-    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "SurfacePostureDriver: created child PDO Root\\SurfacePostureIndicator\n"));
+    KdPrintEx((
+        DPFLTR_IHVDRIVER_ID,
+        DPFLTR_INFO_LEVEL,
+        "SurfacePostureDriver: child PDO created\n"));
 
     return STATUS_SUCCESS;
 }
@@ -102,7 +119,10 @@ NTSTATUS SurfacePostureEvtChildListCreateDevice(
     UNREFERENCED_PARAMETER(ChildList);
 
     PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION childDescription =
-        CONTAINING_RECORD(IdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
+        CONTAINING_RECORD(
+            IdentificationDescription,
+            SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION,
+            Header);
     WDFDEVICE childDevice = NULL;
 
     if (childDescription->ChildIndex != SURFACE_POSTURE_CHILD_INDEX)
@@ -121,18 +141,26 @@ BOOLEAN SurfacePostureEvtChildListIdentificationDescriptionCompare(
     UNREFERENCED_PARAMETER(ChildList);
 
     PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION first =
-        CONTAINING_RECORD(FirstIdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
+        CONTAINING_RECORD(
+            FirstIdentificationDescription,
+            SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION,
+            Header);
     PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION second =
-        CONTAINING_RECORD(SecondIdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
+        CONTAINING_RECORD(
+            SecondIdentificationDescription,
+            SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION,
+            Header);
 
     return first->ChildIndex == second->ChildIndex;
 }
 
-NTSTATUS SurfacePostureEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousState)
+NTSTATUS SurfacePostureEvtDeviceD0Entry(
+    _In_ WDFDEVICE Device,
+    _In_ WDF_POWER_DEVICE_STATE PreviousState)
 {
     UNREFERENCED_PARAMETER(PreviousState);
-    SurfacePosturePublishChild(Device);
-    return STATUS_SUCCESS;
+
+    return SurfacePosturePublishChild(Device);
 }
 
 NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit)
@@ -143,6 +171,8 @@ NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_IN
     WDF_OBJECT_ATTRIBUTES childListAttributes;
     WDF_PNPPOWER_EVENT_CALLBACKS pnpCallbacks;
     WDF_OBJECT_ATTRIBUTES deviceAttributes;
+    WDFDEVICE device;
+    NTSTATUS status;
 
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnpCallbacks);
     pnpCallbacks.EvtDeviceD0Entry = SurfacePostureEvtDeviceD0Entry;
@@ -152,7 +182,8 @@ NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_IN
         &childListConfig,
         sizeof(SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION),
         SurfacePostureEvtChildListCreateDevice);
-    childListConfig.EvtChildListIdentificationDescriptionCompare = SurfacePostureEvtChildListIdentificationDescriptionCompare;
+    childListConfig.EvtChildListIdentificationDescriptionCompare =
+        SurfacePostureEvtChildListIdentificationDescriptionCompare;
 
     WDF_OBJECT_ATTRIBUTES_INIT(&childListAttributes);
     WdfFdoInitSetDefaultChildListConfig(DeviceInit, &childListConfig, &childListAttributes);
@@ -162,14 +193,21 @@ NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_IN
 
     WDF_OBJECT_ATTRIBUTES_INIT(&deviceAttributes);
 
-    WDFDEVICE device;
-    NTSTATUS status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
+    status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
     if (!NT_SUCCESS(status))
     {
         return status;
     }
 
-    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+    status = SurfacePosturePublishChild(device);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    KdPrintEx((
+        DPFLTR_IHVDRIVER_ID,
+        DPFLTR_INFO_LEVEL,
         "SurfacePostureDriver: published PNP0C60-compatible child\n"));
 
     return STATUS_SUCCESS;
@@ -178,16 +216,20 @@ NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_IN
 VOID SurfacePostureDriverUnload(_In_ WDFDRIVER Driver)
 {
     UNREFERENCED_PARAMETER(Driver);
-    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "SurfacePostureDriver: unload\n"));
+    KdPrintEx((
+        DPFLTR_IHVDRIVER_ID,
+        DPFLTR_INFO_LEVEL,
+        "SurfacePostureDriver: unload\n"));
 }
 
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath)
 {
     WDF_DRIVER_CONFIG config;
+    WDF_OBJECT_ATTRIBUTES attributes;
+
     WDF_DRIVER_CONFIG_INIT(&config, SurfacePostureEvtDeviceAdd);
     config.EvtDriverUnload = SurfacePostureDriverUnload;
 
-    WDF_OBJECT_ATTRIBUTES attributes;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
 
     return WdfDriverCreate(DriverObject, RegistryPath, &attributes, &config, WDF_NO_HANDLE);
