@@ -7,7 +7,7 @@
 - accepts only `TABLET`, `LAPTOP`, and `PING`
 - logs every request without logging the token
 - opens or hides the Windows touch keyboard using best-effort software control
-- uses the posture driver when it is installed and falls back to the existing registry-and-broadcast behavior only when the driver is absent
+- uses the posture bus package when it is installed and falls back to the existing registry-and-broadcast behavior only when the driver is absent
 
 ## Install
 
@@ -45,6 +45,7 @@ If you prefer to manage the firewall manually, allow inbound TCP on the configur
 The supported convertible path is documented in [Windows Posture](WINDOWS_POSTURE.md). The short version is:
 
 - confirm the Microsoft `GPIO Laptop or Slate Indicator Driver` path is available through the posture driver package
+- confirm `GetSystemMetrics(SM_CONVERTIBLESLATEMODE)` changes after `TABLET` and `LAPTOP`
 - send `TABLET` and `LAPTOP` requests to the receiver
 - check the receiver log for the posture backend it used
 

@@ -51,22 +51,22 @@ internal sealed class SurfacePostureController : IPostureController
             if (TryToggleSurfacePostureDriver(targetMode, out var driverMessage))
             {
                 CurrentMode = targetMode;
-                _log.Info("posture", "driver", previous.ToString(), targetMode.ToString(), true, driverMessage);
-                return new PostureApplyResult(true, true, previous, targetMode, "driver", driverMessage);
+                _log.Info("posture", "posture_driver", previous.ToString(), targetMode.ToString(), true, driverMessage);
+                return new PostureApplyResult(true, true, previous, targetMode, "posture_driver", driverMessage);
             }
 
             if (driverMessage != "Surface posture driver interface not present.")
             {
-                _log.Error("posture", "driver", previous.ToString(), targetMode.ToString(), false, driverMessage);
-                return new PostureApplyResult(false, false, previous, previous, "driver", driverMessage);
+                _log.Error("posture", "posture_driver", previous.ToString(), targetMode.ToString(), false, driverMessage);
+                return new PostureApplyResult(false, false, previous, previous, "posture_driver", driverMessage);
             }
 
             var registryMessage = UpdateConvertibleSlateModeRegistry(targetMode);
             BroadcastConvertibleSlateModeChange();
             CurrentMode = targetMode;
 
-            _log.Info("posture", "registry", previous.ToString(), targetMode.ToString(), true, registryMessage);
-            return new PostureApplyResult(true, true, previous, targetMode, "registry", registryMessage);
+            _log.Info("posture", "posture_registry", previous.ToString(), targetMode.ToString(), true, registryMessage);
+            return new PostureApplyResult(true, true, previous, targetMode, "posture_registry", registryMessage);
         }
     }
 

@@ -40,4 +40,8 @@ if ($certPath -and (Test-Path $certPath)) {
     }
 }
 
+if (Test-Path $DevConPath) {
+    & $DevConPath rescan
+}
+
 Write-Host 'SurfacePostureDriver removed where present.'

@@ -180,7 +180,7 @@ internal sealed class SurfaceModeServer : IDisposable
             var postureResult = _postureController.Apply(result.CurrentMode);
             if (postureResult.Ok)
             {
-                _log.Info(source, $"posture_{postureResult.Path}",
+                _log.Info(source, postureResult.Path,
                     result.PreviousMode.ToString(),
                     postureResult.CurrentMode.ToString(),
                     postureResult.Ok,
@@ -188,7 +188,7 @@ internal sealed class SurfaceModeServer : IDisposable
             }
             else
             {
-                _log.Error(source, $"posture_{postureResult.Path}",
+                _log.Error(source, postureResult.Path,
                     result.PreviousMode.ToString(),
                     result.CurrentMode.ToString(),
                     false,

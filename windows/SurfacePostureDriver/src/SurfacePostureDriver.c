@@ -1,48 +1,150 @@
 #define INITGUID
 #include "SurfacePostureDriver.h"
 
-static VOID SurfacePostureApplyMode(_In_ PDEVICE_CONTEXT Context, _In_ UCHAR RequestedMode)
+#define SURFACE_POSTURE_CHILD_INDEX 0
+#define SURFACE_POSTURE_CHILD_DEVICE_ID L"Root\\SurfacePostureIndicator"
+#define SURFACE_POSTURE_CHILD_HARDWARE_ID L"Root\\SurfacePostureIndicator"
+#define SURFACE_POSTURE_CHILD_COMPATIBLE_ID L"PNP0C60"
+#define SURFACE_POSTURE_CHILD_INSTANCE_ID L"0"
+#define SURFACE_POSTURE_CHILD_DEVICE_TEXT L"Surface Posture Indicator"
+#define SURFACE_POSTURE_CHILD_LOCATION_TEXT L"Surface Posture Driver"
+#define SURFACE_POSTURE_LOCALE_ID 0x0409
+
+static VOID SurfacePosturePublishChild(_In_ WDFDEVICE Device)
 {
-    Context->Status.RequestedMode = RequestedMode;
-    Context->Status.CurrentMode = RequestedMode;
-    Context->Status.Applied = 1;
-    Context->Status.LastAppliedStatus = STATUS_SUCCESS;
-    Context->Status.Sequence += 1;
+    WDFCHILDLIST childList = WdfFdoGetDefaultChildList(Device);
+    SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION childDescription;
+
+    WDF_CHILD_IDENTIFICATION_DESCRIPTION_HEADER_INIT(
+        &childDescription.Header,
+        sizeof(childDescription));
+    childDescription.ChildIndex = SURFACE_POSTURE_CHILD_INDEX;
+
+    WdfChildListBeginScan(childList);
+    (VOID)WdfChildListAddOrUpdateChildDescriptionAsPresent(childList, &childDescription.Header, NULL);
+    WdfChildListEndScan(childList);
 }
 
-static VOID SurfacePostureInitializeStatus(_Out_ PSURFACE_POSTURE_STATUS Status)
+static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit)
 {
-    RtlZeroMemory(Status, sizeof(*Status));
-    Status->Size = sizeof(*Status);
-    Status->CurrentMode = SurfacePostureModeUnknown;
-    Status->RequestedMode = SurfacePostureModeUnknown;
-    Status->LastAppliedStatus = STATUS_UNSUCCESSFUL;
-    Status->Applied = 0;
+    UNICODE_STRING deviceId;
+    UNICODE_STRING hardwareId;
+    UNICODE_STRING compatibleId;
+    UNICODE_STRING instanceId;
+    UNICODE_STRING deviceText;
+    UNICODE_STRING locationText;
+    WDF_PDO_EVENT_CALLBACKS pdoCallbacks;
+
+    RtlInitUnicodeString(&deviceId, SURFACE_POSTURE_CHILD_DEVICE_ID);
+    RtlInitUnicodeString(&hardwareId, SURFACE_POSTURE_CHILD_HARDWARE_ID);
+    RtlInitUnicodeString(&compatibleId, SURFACE_POSTURE_CHILD_COMPATIBLE_ID);
+    RtlInitUnicodeString(&instanceId, SURFACE_POSTURE_CHILD_INSTANCE_ID);
+    RtlInitUnicodeString(&deviceText, SURFACE_POSTURE_CHILD_DEVICE_TEXT);
+    RtlInitUnicodeString(&locationText, SURFACE_POSTURE_CHILD_LOCATION_TEXT);
+
+    WDF_PDO_EVENT_CALLBACKS_INIT(&pdoCallbacks);
+    WdfPdoInitSetEventCallbacks(ChildInit, &pdoCallbacks);
+    WdfPdoInitSetDefaultLocale(ChildInit, SURFACE_POSTURE_LOCALE_ID);
+
+    NTSTATUS status = WdfPdoInitAssignDeviceID(ChildInit, &deviceId);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfPdoInitAddHardwareID(ChildInit, &hardwareId);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfPdoInitAddCompatibleID(ChildInit, &compatibleId);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfPdoInitAssignInstanceID(ChildInit, &instanceId);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfPdoInitAddDeviceText(ChildInit, &deviceText, &locationText, SURFACE_POSTURE_LOCALE_ID);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    return STATUS_SUCCESS;
 }
 
-static NTSTATUS SurfacePostureCreateQueue(_In_ WDFDEVICE Device)
+NTSTATUS SurfacePostureEvtChildListCreateDevice(
+    _In_ WDFCHILDLIST ChildList,
+    _In_ PWDF_CHILD_IDENTIFICATION_DESCRIPTION_HEADER IdentificationDescription,
+    _In_ PWDFDEVICE_INIT ChildInit)
 {
-    WDF_IO_QUEUE_CONFIG queueConfig;
-    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
-    queueConfig.EvtIoWrite = SurfacePostureEvtIoWrite;
-    queueConfig.EvtIoDeviceControl = SurfacePostureEvtIoDeviceControl;
+    UNREFERENCED_PARAMETER(ChildList);
 
-    WDF_OBJECT_ATTRIBUTES queueAttributes;
-    WDF_OBJECT_ATTRIBUTES_INIT(&queueAttributes);
+    PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION childDescription =
+        CONTAINING_RECORD(IdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
 
-    WDFQUEUE queue;
-    return WdfIoQueueCreate(Device, &queueConfig, &queueAttributes, &queue);
+    if (childDescription->ChildIndex != SURFACE_POSTURE_CHILD_INDEX)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    return SurfacePostureInitializeChildInit(ChildInit);
+}
+
+BOOLEAN SurfacePostureEvtChildListIdentificationDescriptionCompare(
+    _In_ WDFCHILDLIST ChildList,
+    _In_ PWDF_CHILD_IDENTIFICATION_DESCRIPTION_HEADER FirstIdentificationDescription,
+    _In_ PWDF_CHILD_IDENTIFICATION_DESCRIPTION_HEADER SecondIdentificationDescription)
+{
+    UNREFERENCED_PARAMETER(ChildList);
+
+    PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION first =
+        CONTAINING_RECORD(FirstIdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
+    PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION second =
+        CONTAINING_RECORD(SecondIdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
+
+    return first->ChildIndex == second->ChildIndex;
+}
+
+NTSTATUS SurfacePostureEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE_STATE PreviousState)
+{
+    UNREFERENCED_PARAMETER(PreviousState);
+    SurfacePosturePublishChild(Device);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit)
 {
     UNREFERENCED_PARAMETER(Driver);
 
+    WDF_CHILD_LIST_CONFIG childListConfig;
+    WDF_OBJECT_ATTRIBUTES childListAttributes;
+    WDF_PNPPOWER_EVENT_CALLBACKS pnpCallbacks;
     WDF_OBJECT_ATTRIBUTES deviceAttributes;
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&deviceAttributes, DEVICE_CONTEXT);
+
+    WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnpCallbacks);
+    pnpCallbacks.EvtDeviceD0Entry = SurfacePostureEvtDeviceD0Entry;
+    WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpCallbacks);
+
+    WDF_CHILD_LIST_CONFIG_INIT(
+        &childListConfig,
+        sizeof(SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION),
+        SurfacePostureEvtChildListCreateDevice);
+    childListConfig.EvtChildListIdentificationDescriptionCompare = SurfacePostureEvtChildListIdentificationDescriptionCompare;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&childListAttributes);
+    WdfFdoInitSetDefaultChildListConfig(DeviceInit, &childListConfig, &childListAttributes);
 
     WdfDeviceInitSetDeviceType(DeviceInit, FILE_DEVICE_UNKNOWN);
     WdfDeviceInitSetCharacteristics(DeviceInit, FILE_DEVICE_SECURE_OPEN, FALSE);
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&deviceAttributes);
 
     WDFDEVICE device;
     NTSTATUS status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
@@ -51,93 +153,10 @@ NTSTATUS SurfacePostureEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_IN
         return status;
     }
 
-    PDEVICE_CONTEXT context = SurfacePostureGetContext(device);
-    SurfacePostureInitializeStatus(&context->Status);
-
-    status = WdfDeviceCreateDeviceInterface(device, &GUID_GPIOBUTTONS_LAPTOPSLATE_INTERFACE, NULL);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    status = SurfacePostureCreateQueue(device);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "SurfacePostureDriver: device created\n"));
-    return STATUS_SUCCESS;
-}
-
-VOID SurfacePostureEvtIoWrite(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t Length)
-{
-    UNREFERENCED_PARAMETER(Length);
-
-    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
-    PDEVICE_CONTEXT context = SurfacePostureGetContext(device);
-
-    size_t inputLength = 0;
-    PUCHAR inputBuffer = NULL;
-    NTSTATUS status = WdfRequestRetrieveInputBuffer(Request, 1, (PVOID*)&inputBuffer, &inputLength);
-    if (!NT_SUCCESS(status))
-    {
-        context->Status.LastAppliedStatus = status;
-        WdfRequestComplete(Request, status);
-        return;
-    }
-
-    UCHAR requestedMode = inputBuffer[0];
-    if (requestedMode != SurfacePostureModeTablet && requestedMode != SurfacePostureModeLaptop)
-    {
-        context->Status.RequestedMode = requestedMode;
-        context->Status.LastAppliedStatus = STATUS_INVALID_PARAMETER;
-        context->Status.Applied = 0;
-        WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-        return;
-    }
-
-    SurfacePostureApplyMode(context, requestedMode);
     KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-        "SurfacePostureDriver: requested=%u current=%u sequence=%lu\n",
-        requestedMode,
-        context->Status.CurrentMode,
-        context->Status.Sequence));
+        "SurfacePostureDriver: published PNP0C60-compatible child\n"));
 
-    WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, inputLength);
-}
-
-VOID SurfacePostureEvtIoDeviceControl(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request, _In_ size_t OutputBufferLength, _In_ size_t InputBufferLength, _In_ ULONG IoControlCode)
-{
-    UNREFERENCED_PARAMETER(InputBufferLength);
-
-    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
-    PDEVICE_CONTEXT context = SurfacePostureGetContext(device);
-
-    if (IoControlCode != IOCTL_SURFACE_POSTURE_GET_STATUS)
-    {
-        WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
-        return;
-    }
-
-    PSURFACE_POSTURE_STATUS output = NULL;
-    NTSTATUS status = WdfRequestRetrieveOutputBuffer(Request, sizeof(SURFACE_POSTURE_STATUS), (PVOID*)&output, NULL);
-    if (!NT_SUCCESS(status))
-    {
-        context->Status.LastAppliedStatus = status;
-        WdfRequestComplete(Request, status);
-        return;
-    }
-
-    if (OutputBufferLength < sizeof(SURFACE_POSTURE_STATUS))
-    {
-        context->Status.LastAppliedStatus = STATUS_BUFFER_TOO_SMALL;
-        WdfRequestComplete(Request, STATUS_BUFFER_TOO_SMALL);
-        return;
-    }
-
-    *output = context->Status;
-    WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, sizeof(SURFACE_POSTURE_STATUS));
+    return STATUS_SUCCESS;
 }
 
 VOID SurfacePostureDriverUnload(_In_ WDFDRIVER Driver)

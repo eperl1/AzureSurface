@@ -1,7 +1,8 @@
 param(
     [string]$PackagePath = (Join-Path $PSScriptRoot '..\artifacts\windows\SurfacePostureDriver\package'),
     [string]$ReceiverUrl = 'http://127.0.0.1:47889/api/mode',
-    [string]$BearerToken = ''
+    [string]$BearerToken = '',
+    [switch]$RequireInstalledDevice
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,7 +21,9 @@ foreach ($file in @($inf, $sys, $cat, $cer)) {
 
 $device = Get-PnpDevice -PresentOnly:$false -FriendlyName 'Surface Posture Injection Driver' -ErrorAction SilentlyContinue
 if (-not $device) {
-    throw 'SurfacePostureDriver device is not present.'
+    if ($RequireInstalledDevice) {
+        throw 'SurfacePostureDriver device is not present.'
+    }
 }
 
 if ($BearerToken) {
@@ -38,4 +41,6 @@ if ($BearerToken) {
 }
 
 Write-Host 'SurfacePostureDriver package verified.'
-Write-Host "Device: $($device.InstanceId)"
+if ($device) {
+    Write-Host "Device: $($device.InstanceId)"
+}

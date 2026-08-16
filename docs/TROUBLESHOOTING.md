@@ -12,8 +12,8 @@
 - Make sure the iPad app has a host, port, and token saved.
 - Open the iPad app settings and use `Test Connection`.
 - Check the Windows receiver log file.
-- If the log says `registry` instead of `driver`, the posture driver is not installed or not exposing the interface the receiver expects.
-- Use the checks in [Windows Posture](WINDOWS_POSTURE.md) to confirm whether the GPIO device exists.
+- If the log says `posture_registry` instead of `posture_driver`, the VM-installable posture path is missing or not exposing the inbox interface the receiver expects.
+- Use the checks in [Windows Posture](WINDOWS_POSTURE.md) to confirm whether the `PNP0C60`-compatible child exists and whether `SM_CONVERTIBLESLATEMODE` changes.
 
 ## The touch keyboard does not open
 
@@ -25,6 +25,7 @@
 
 - The Windows receiver now tries the posture driver path first.
 - If the posture driver is missing, the app falls back to the registry-and-broadcast behavior and cannot become a true convertible on its own.
+- On Windows 11 build 10.0.26100.33158, the shell may still not visually re-layout even when the metric changes correctly. Treat the metric transition as the acceptance check.
 
 ## Signing fails on GitHub Actions
 

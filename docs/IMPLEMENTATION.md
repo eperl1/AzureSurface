@@ -51,6 +51,8 @@ These files are copied into the upstream FreeRDP iOS tree during the build:
 - `windows/SurfacePostureDriver/src/SurfacePostureDriver.c`
 - `windows/SurfacePostureDriver/src/SurfacePostureDriver.h`
 
+This package is a root-enumerated KMDF bus driver. It publishes a child device with a `PNP0C60` compatible ID so Microsoft's inbox GPIO laptop/slate indicator driver can bind to it in a VM that does not have OEM convertible firmware. The receiver then writes to `GUID_GPIOBUTTONS_LAPTOPSLATE_INTERFACE` on that inbox path and verifies the change by reading `SM_CONVERTIBLESLATEMODE` from Windows.
+
 ## Tests
 
 - `windows/SurfaceModeReceiver/tests/SurfaceModeReceiver.Tests/ModeParserTests.cs`

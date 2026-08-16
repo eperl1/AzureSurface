@@ -2,24 +2,27 @@
 
 ## What changed
 
-The Windows receiver now tries to drive real convertible posture using Microsoft’s supported GPIO laptop/slate indicator path through a VM-installable posture driver package:
+The Windows receiver now drives the supported Microsoft laptop/slate posture path instead of a private fake state:
 
-- `GUID_GPIOBUTTONS_LAPTOPSLATE_INTERFACE`
-- `GPIO Laptop or Slate Indicator Driver`
-- `SM_CONVERTIBLESLATEMODE` / `WM_SETTINGCHANGE`
+- `windows/SurfacePostureDriver` is a root-enumerated KMDF bus package
+- the bus publishes a child device compatible with `PNP0C60`
+- that child causes the Microsoft inbox `GPIO Laptop or Slate Indicator Driver` to load
+- the receiver writes to `GUID_GPIOBUTTONS_LAPTOPSLATE_INTERFACE`
+- success is verified from Windows itself with `SM_CONVERTIBLESLATEMODE`
 
 The receiver still keeps the existing touchscreen control and the `TABLET` / `LAPTOP` command flow.
 
 ## How it works
 
 1. `SurfaceModeReceiver` receives `TABLET` or `LAPTOP`.
-2. The new posture controller checks the current mode.
-3. If the posture driver is installed, it writes to the `GUID_GPIOBUTTONS_LAPTOPSLATE_INTERFACE` path exposed by that driver and verifies that the driver reports the new state back.
-4. If the posture driver is not present, it falls back to the existing registry-and-broadcast path so the app still behaves predictably.
+2. The posture controller asks the driver client to write the new state through the inbox indicator interface.
+3. The driver client waits for `GetSystemMetrics(SM_CONVERTIBLESLATEMODE)` to match the requested mode.
+4. If the indicator path is missing, the receiver falls back to the existing registry-and-broadcast behavior.
+5. If the indicator path is present but Windows does not change the metric, the receiver reports failure instead of claiming success.
 
 ## What you must already have
 
-Install the posture driver package first. It root-enumerates a supported laptop/slate indicator interface that the receiver can talk to even when the VM does not expose OEM convertible firmware.
+Install the posture driver package first. It is VM-installable and does not require OEM firmware, but it does rely on Microsoft’s inbox GPIO laptop/slate indicator driver loading for the child device.
 
 If the package is unsigned, enable Windows test signing first and reboot before installing it.
 
@@ -39,13 +42,13 @@ Use these checks on the VM:
 ```powershell
 Get-PnpDevice -FriendlyName 'Surface Posture Injection Driver'
 Get-Process SurfaceModeReceiver -ErrorAction SilentlyContinue
-reg query HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl /v ConvertibleSlateMode
 pnputil /enum-devices /class System | findstr /i "Surface Posture Injection Driver"
+[System.Windows.Forms.SystemInformation]::ConvertibleSlateMode
 ```
 
-The last command should show the posture driver device once it is installed.
+The device list should show the bus package, and the metric should change after sending `TABLET` or `LAPTOP`.
 
-If you want to verify the receiver side, send a request with `TABLET` and `LAPTOP` and confirm the log records `posture_driver` when the driver path was used.
+If you want to verify the receiver side, send a request with `TABLET` and `LAPTOP` and confirm the log records `posture_driver` when the inbox driver path was used.
 
 ## Roll back
 
@@ -59,6 +62,4 @@ That removes the startup shortcut, firewall rule, install directory, and optiona
 
 ## Important limitation
 
-This repo can install the receiver, install the posture driver package, wire up the HTTP control flow, and try the supported Windows indicator interface.
-
-The remaining limitation is that Windows shell behavior still depends on the OS honoring the indicator state the driver exposes. If the VM does not react to the driver-backed indicator, the receiver will report that failure instead of pretending the posture changed.
+Windows 11 build 10.0.26100.33158 may still show shell UI quirks even after the posture metric changes correctly. The receiver treats the metric transition as the real success condition and reports failures when Windows does not honor it.

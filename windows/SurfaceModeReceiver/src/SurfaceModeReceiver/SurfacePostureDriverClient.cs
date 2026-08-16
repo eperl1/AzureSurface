@@ -1,18 +1,21 @@
 using Microsoft.Win32.SafeHandles;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace SurfaceModeReceiver;
 
 internal static class SurfacePostureDriverClient
 {
-    private const uint GenericRead = 0x80000000;
     private const uint GenericWrite = 0x40000000;
     private const uint FileShareReadWrite = 0x00000003;
     private const uint FileModeOpen = 0x00000003;
     private const uint FileFlagsAndAttributesNormal = 0x00000080;
-    private const int StatusBufferSize = 24;
+    private const int ConvertibleSlateModeMetric = 0x2003;
+    private const int PostureChangeTimeoutMs = 5000;
+    private const int PosturePollIntervalMs = 100;
     private static readonly Guid LaptopSlateInterfaceGuid = new("317fc439-3f77-41c8-b09e-08ad63272aa3");
 
     public static bool TryApply(SurfaceMode targetMode, out string message)
@@ -29,7 +32,7 @@ internal static class SurfacePostureDriverClient
         {
             using var handle = NativeMethods.CreateFile(
                 path,
-                GenericRead | GenericWrite,
+                GenericWrite,
                 FileShareReadWrite,
                 IntPtr.Zero,
                 FileModeOpen,
@@ -42,13 +45,10 @@ internal static class SurfacePostureDriverClient
                 return false;
             }
 
-            if (!TryQueryStatus(handle, out var before, out var queryMessage))
-            {
-                message = $"Posture driver status query failed for {path}: {queryMessage}";
-                return false;
-            }
-
             var payload = new[] { targetMode == SurfaceMode.Tablet ? (byte)0 : (byte)1 };
+            var expectedMetric = targetMode == SurfaceMode.Tablet ? 0 : 1;
+            var beforeMetric = NativeMethods.GetSystemMetrics(ConvertibleSlateModeMetric);
+
             if (!NativeMethods.WriteFile(handle, payload, payload.Length, out var bytesWritten, IntPtr.Zero))
             {
                 message = $"Failed to write posture request to {path}: {new Win32Exception(Marshal.GetLastWin32Error()).Message}";
@@ -61,20 +61,13 @@ internal static class SurfacePostureDriverClient
                 return false;
             }
 
-            if (!TryQueryStatus(handle, out var after, out queryMessage))
+            if (!TryWaitForWindowsMetric(expectedMetric, out var observedMetric, out var waitMessage))
             {
-                message = $"Posture driver did not report an applied state for {path}: {queryMessage}";
+                message = $"Posture driver wrote successfully to {path}, but Windows did not report the requested posture change. {waitMessage}";
                 return false;
             }
 
-            var expectedMode = targetMode == SurfaceMode.Tablet ? 0u : 1u;
-            if (after.CurrentMode != expectedMode || after.LastAppliedStatus != 0 || after.RequestedMode != expectedMode)
-            {
-                message = $"Posture driver acknowledged {path} but reported current={after.CurrentMode}, requested={after.RequestedMode}, status={after.LastAppliedStatus}.";
-                return false;
-            }
-
-            message = $"Applied {targetMode} through {path} (sequence {before.Sequence}->{after.Sequence}).";
+            message = $"Applied {targetMode} through {path} (SM_CONVERTIBLESLATEMODE {beforeMetric}->{observedMetric}).";
             return true;
         }
         catch (Exception ex)
@@ -84,40 +77,24 @@ internal static class SurfacePostureDriverClient
         }
     }
 
-    private static bool TryQueryStatus(SafeFileHandle handle, out SurfacePostureDriverStatus status, out string message)
+    private static bool TryWaitForWindowsMetric(int expectedMetric, out int observedMetric, out string message)
     {
-        status = default;
-        message = string.Empty;
-
-        var output = new byte[StatusBufferSize];
-        if (!NativeMethods.DeviceIoControl(
-                handle,
-                SurfacePostureDriverIoctls.GetStatus,
-                IntPtr.Zero,
-                0,
-                output,
-                output.Length,
-                out var bytesReturned,
-                IntPtr.Zero))
+        var stopwatch = Stopwatch.StartNew();
+        observedMetric = NativeMethods.GetSystemMetrics(ConvertibleSlateModeMetric);
+        while (stopwatch.ElapsedMilliseconds < PostureChangeTimeoutMs)
         {
-            message = new Win32Exception(Marshal.GetLastWin32Error()).Message;
-            return false;
+            if (observedMetric == expectedMetric)
+            {
+                message = string.Empty;
+                return true;
+            }
+
+            Thread.Sleep(PosturePollIntervalMs);
+            observedMetric = NativeMethods.GetSystemMetrics(ConvertibleSlateModeMetric);
         }
 
-        if (bytesReturned < Marshal.SizeOf<SurfacePostureDriverStatus>())
-        {
-            message = $"Driver returned only {bytesReturned} bytes of posture status.";
-            return false;
-        }
-
-        status = MemoryMarshal.Read<SurfacePostureDriverStatus>(output);
-        if (status.Size < (uint)Marshal.SizeOf<SurfacePostureDriverStatus>())
-        {
-            message = $"Driver returned an unexpected posture status size of {status.Size}.";
-            return false;
-        }
-
-        return true;
+        message = $"Observed SM_CONVERTIBLESLATEMODE={observedMetric} after {PostureChangeTimeoutMs}ms; expected {expectedMetric}.";
+        return false;
     }
 
     private static bool TryFindDeviceInterfacePath(Guid interfaceGuid, [NotNullWhen(true)] out string? devicePath)
@@ -164,7 +141,7 @@ internal static class SurfacePostureDriverClient
                         continue;
                     }
 
-                    var pathOffset = IntPtr.Size == 8 ? 8 : 6;
+                    var pathOffset = 4;
                     var candidate = Marshal.PtrToStringUni(IntPtr.Add(detailBuffer, pathOffset));
                     if (!string.IsNullOrWhiteSpace(candidate))
                     {
@@ -186,17 +163,3 @@ internal static class SurfacePostureDriverClient
         }
     }
 }
-
-internal readonly record struct SurfacePostureDriverStatus(
-    uint Size,
-    uint CurrentMode,
-    uint RequestedMode,
-    uint Sequence,
-    uint LastAppliedStatus,
-    uint Reserved);
-
-internal static class SurfacePostureDriverIoctls
-{
-    public const uint GetStatus = 0x83332004;
-}
-

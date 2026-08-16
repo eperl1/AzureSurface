@@ -85,7 +85,6 @@ function Copy-DriverPayload {
     )
 
     Copy-Item -Path (Join-Path $driverSourceDir 'SurfacePostureDriver.inf') -Destination $Destination -Force
-    Copy-Item -Path (Join-Path $driverSourceDir 'src\SurfacePostureDriver.h') -Destination (Join-Path $Destination 'SurfacePostureDriver.h') -Force
     Copy-Item -Path (Join-Path $repoRoot 'scripts\install-posture-driver.ps1') -Destination $Destination -Force
     Copy-Item -Path (Join-Path $repoRoot 'scripts\uninstall-posture-driver.ps1') -Destination $Destination -Force
     Copy-Item -Path (Join-Path $repoRoot 'scripts\verify-posture-driver.ps1') -Destination $Destination -Force
