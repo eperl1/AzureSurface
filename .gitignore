@@ -16,3 +16,7 @@ windows/SurfaceModeReceiver/src/**/bin/
 windows/SurfaceModeReceiver/src/**/obj/
 windows/SurfaceModeReceiver/tests/**/bin/
 windows/SurfaceModeReceiver/tests/**/obj/
+windows/SurfacePostureDriver/**/Debug/
+windows/SurfacePostureDriver/**/Release/
+windows/SurfacePostureDriver/**/x64/
+artifacts/

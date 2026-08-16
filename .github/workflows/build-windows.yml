@@ -20,33 +20,37 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Restore
-        run: dotnet restore windows/SurfaceModeReceiver/SurfaceModeReceiver.sln
-
-      - name: Test
-        run: dotnet test windows/SurfaceModeReceiver/SurfaceModeReceiver.sln --configuration Release --no-restore
-
-      - name: Publish
+      - name: Build receiver and posture driver
+        shell: pwsh
         run: |
-          dotnet publish windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfaceModeReceiver.csproj `
-            --configuration Release `
-            --runtime win-x64 `
-            --self-contained false `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -o $env:RUNNER_TEMP\SurfaceModeReceiver-publish
+          ./scripts/build-windows.ps1 -Configuration Release -Runtime win-x64 -OutputPath (Join-Path $env:RUNNER_TEMP 'SurfaceModeReceiver-publish') -DriverOutputPath (Join-Path $env:RUNNER_TEMP 'SurfacePostureDriver')
 
-      - name: Package
+      - name: Package receiver
         shell: pwsh
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'SurfaceModeReceiver.zip'
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'SurfaceModeReceiver-publish\*') -DestinationPath $zip
-          "ARTIFACT=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RECEIVER_ARTIFACT=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Package posture driver
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'SurfacePostureDriver.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'SurfacePostureDriver\package\*') -DestinationPath $zip
+          "DRIVER_ARTIFACT=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: SurfaceModeReceiver.zip
-          path: ${{ env.ARTIFACT }}
+          path: ${{ env.RECEIVER_ARTIFACT }}
+          if-no-files-found: error
+
+      - name: Upload posture driver artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SurfacePostureDriver.zip
+          path: ${{ env.DRIVER_ARTIFACT }}
           if-no-files-found: error

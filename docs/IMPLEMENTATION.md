@@ -20,6 +20,10 @@ These files are copied into the upstream FreeRDP iOS tree during the build:
 - `ios/scripts/apply-freerdp-overlay.sh`
 - `ios/scripts/build-freerdp-ios.sh`
 - `scripts/build-windows.ps1`
+- `scripts/build-posture-driver.ps1`
+- `scripts/install-posture-driver.ps1`
+- `scripts/uninstall-posture-driver.ps1`
+- `scripts/verify-posture-driver.ps1`
 - `scripts/install-windows-receiver.ps1`
 - `scripts/uninstall-windows-receiver.ps1`
 - `docs/WINDOWS_POSTURE.md`
@@ -36,7 +40,16 @@ These files are copied into the upstream FreeRDP iOS tree during the build:
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/TouchKeyboardController.cs`
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfaceModeServer.cs`
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfacePostureController.cs`
+- `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfacePostureDriverClient.cs`
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/Properties/AssemblyInfo.cs`
+
+## Windows posture driver
+
+- `windows/SurfacePostureDriver/SurfacePostureDriver.sln`
+- `windows/SurfacePostureDriver/SurfacePostureDriver.vcxproj`
+- `windows/SurfacePostureDriver/SurfacePostureDriver.inf`
+- `windows/SurfacePostureDriver/src/SurfacePostureDriver.c`
+- `windows/SurfacePostureDriver/src/SurfacePostureDriver.h`
 
 ## Tests
 

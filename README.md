@@ -9,6 +9,7 @@ The repo contains:
 
 - an iPad/iOS overlay for the FreeRDP iOS client
 - a Windows 11 receiver written in C#/.NET
+- a root-enumerated Windows posture driver package for VM installs
 - GitHub Actions workflows for unsigned iOS builds, signed iOS builds, and Windows builds
 - setup and signing documentation
 - Windows posture install, verify, and rollback guidance
@@ -23,7 +24,7 @@ The repo contains:
   - rejects stale or duplicate requests
   - logs mode transitions
   - shows/hides the Windows touch keyboard
-  - tries the supported Windows GPIO laptop/slate indicator path when available
+  - talks to the posture driver when it is installed and falls back only when it is absent
   - keeps duplicate tablet/laptop events idempotent
 
 ## Architecture
@@ -37,16 +38,21 @@ The repo contains:
   - .NET 8 Windows tray app
   - authenticated HTTP listener
   - state machine and tests
+- `windows/SurfacePostureDriver/`
+  - root-enumerated KMDF posture driver package
+  - exposes the Microsoft laptop/slate indicator interface GUID
+  - accepts posture writes and reports applied state back to the receiver
 - `.github/workflows/`
   - unsigned iOS build on GitHub-hosted macOS
   - signed iOS build on GitHub-hosted macOS
-  - Windows receiver build on GitHub-hosted Windows
+  - Windows receiver and posture-driver builds on GitHub-hosted Windows
 
 ## Current state
 
 - Windows receiver source and tests are implemented in this repo.
 - The iPad changes are implemented as an overlay on top of upstream FreeRDP 3.30.0.
 - I could not run a local Windows or iOS build in this environment because the local shell does not have the .NET SDK or Xcode toolchain installed. The GitHub Actions workflows are the intended build path.
+- The posture driver package is built separately and installed on the Windows VM before the receiver uses it.
 
 ## How to build
 

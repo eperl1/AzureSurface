@@ -178,11 +178,26 @@ internal sealed class SurfaceModeServer : IDisposable
         if (result.Ok && result.Changed)
         {
             var postureResult = _postureController.Apply(result.CurrentMode);
-            _log.Info(source, $"posture_{postureResult.Path}",
-                result.PreviousMode.ToString(),
-                postureResult.CurrentMode.ToString(),
-                postureResult.Ok,
-                postureResult.Message);
+            if (postureResult.Ok)
+            {
+                _log.Info(source, $"posture_{postureResult.Path}",
+                    result.PreviousMode.ToString(),
+                    postureResult.CurrentMode.ToString(),
+                    postureResult.Ok,
+                    postureResult.Message);
+            }
+            else
+            {
+                _log.Error(source, $"posture_{postureResult.Path}",
+                    result.PreviousMode.ToString(),
+                    result.CurrentMode.ToString(),
+                    false,
+                    postureResult.Message);
+                return Results.Problem(
+                    title: "Posture change failed",
+                    detail: postureResult.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             if (command == ModeCommand.Tablet)
             {

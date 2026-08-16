@@ -7,15 +7,16 @@
 - accepts only `TABLET`, `LAPTOP`, and `PING`
 - logs every request without logging the token
 - opens or hides the Windows touch keyboard using best-effort software control
-- tries Microsoft’s supported GPIO laptop/slate indicator path before falling back to the existing registry-and-broadcast behavior
+- uses the posture driver when it is installed and falls back to the existing registry-and-broadcast behavior only when the driver is absent
 
 ## Install
 
-1. Build `SurfaceModeReceiver.zip` from GitHub Actions.
-2. Copy the zip to the Azure VM.
-3. Extract it somewhere stable, such as `C:\Program Files\SurfaceModeReceiver`.
-4. Run `scripts\install-windows-receiver.ps1` from an elevated PowerShell session if you want the startup shortcut and firewall rule created automatically.
-5. Use `docs/WINDOWS_POSTURE.md` for posture verification and rollback details.
+1. Build `SurfaceModeReceiver.zip` and `SurfacePostureDriver.zip` from GitHub Actions.
+2. Copy both zips to the Azure VM.
+3. Extract them somewhere stable, such as `C:\Program Files\SurfaceModeReceiver` and `C:\Program Files\SurfacePostureDriver`.
+4. Run `scripts\install-posture-driver.ps1` from an elevated PowerShell session.
+5. Run `scripts\install-windows-receiver.ps1` from an elevated PowerShell session if you want the startup shortcut and firewall rule created automatically.
+6. Use `docs/WINDOWS_POSTURE.md` for posture verification and rollback details.
 
 ## Startup
 
@@ -26,7 +27,7 @@ The install script:
 - adds an inbound firewall rule for the default control port
 - starts the receiver
 
-If the Windows GPIO laptop/slate indicator device exists on the VM, the receiver will use it automatically when `TABLET` and `LAPTOP` commands arrive.
+If the posture driver is installed, the receiver will use it automatically when `TABLET` and `LAPTOP` commands arrive.
 
 ## Token
 
@@ -43,7 +44,7 @@ If you prefer to manage the firewall manually, allow inbound TCP on the configur
 
 The supported convertible path is documented in [Windows Posture](WINDOWS_POSTURE.md). The short version is:
 
-- confirm the Microsoft `GPIO Laptop or Slate Indicator Driver` is present
+- confirm the Microsoft `GPIO Laptop or Slate Indicator Driver` path is available through the posture driver package
 - send `TABLET` and `LAPTOP` requests to the receiver
 - check the receiver log for the posture backend it used
 

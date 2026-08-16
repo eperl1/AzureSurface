@@ -1,0 +1,50 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%MfgName%
+CatalogFile=SurfacePostureDriver.cat
+DriverVer=08/16/2026,1.0.0.0
+
+[DestinationDirs]
+SurfacePostureDriver.CopyFiles = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+SurfacePostureDriver.sys = 1
+
+[Manufacturer]
+%MfgName%=Models,NTamd64
+
+[Models.NTamd64]
+%SurfacePostureDriver.DeviceDesc% = SurfacePostureDriver_Install, Root\SurfacePostureDriver
+
+[SurfacePostureDriver_Install.NT]
+CopyFiles = SurfacePostureDriver.CopyFiles
+
+[SurfacePostureDriver.CopyFiles]
+SurfacePostureDriver.sys
+
+[SurfacePostureDriver_Install.NT.Services]
+AddService = SurfacePostureDriver, 0x00000002, SurfacePostureDriver_Service
+
+[SurfacePostureDriver_Service]
+DisplayName = %SurfacePostureDriver.ServiceDesc%
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %12%\SurfacePostureDriver.sys
+
+[SurfacePostureDriver_Install.NT.Wdf]
+KmdfService = SurfacePostureDriver, SurfacePostureDriver_Wdf
+
+[SurfacePostureDriver_Wdf]
+KmdfLibraryVersion = 1.33
+
+[Strings]
+MfgName = "eperl1"
+DiskName = "Surface Posture Driver Installation Disk"
+SurfacePostureDriver.DeviceDesc = "Surface Posture Injection Driver"
+SurfacePostureDriver.ServiceDesc = "Surface Posture Injection Driver"

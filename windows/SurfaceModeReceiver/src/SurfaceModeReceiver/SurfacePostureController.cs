@@ -1,7 +1,5 @@
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
-using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -29,7 +27,6 @@ internal sealed class SurfacePostureController : IPostureController
     private const int BroadcastTimeoutMs = 1000;
     private const string ConvertibleSlateModeValueName = "ConvertibleSlateMode";
     private const string ConvertibleSlateModeRegistryPath = @"SYSTEM\CurrentControlSet\Control\PriorityControl";
-    private static readonly Guid LaptopSlateInterfaceGuid = new("317fc439-3f77-41c8-b09e-08ad63272aa3");
     private readonly object _gate = new();
     private readonly ReceiverLog _log;
 
@@ -51,11 +48,17 @@ internal sealed class SurfacePostureController : IPostureController
                 return new PostureApplyResult(true, false, previous, targetMode, "no-op", "Posture already matches the requested mode.");
             }
 
-            if (TryToggleGpioLaptopSlateIndicator(targetMode, out var path, out var gpioMessage))
+            if (TryToggleSurfacePostureDriver(targetMode, out var driverMessage))
             {
                 CurrentMode = targetMode;
-                _log.Info("posture", "gpio", previous.ToString(), targetMode.ToString(), true, gpioMessage);
-                return new PostureApplyResult(true, true, previous, targetMode, "gpio", gpioMessage);
+                _log.Info("posture", "driver", previous.ToString(), targetMode.ToString(), true, driverMessage);
+                return new PostureApplyResult(true, true, previous, targetMode, "driver", driverMessage);
+            }
+
+            if (driverMessage != "Surface posture driver interface not present.")
+            {
+                _log.Error("posture", "driver", previous.ToString(), targetMode.ToString(), false, driverMessage);
+                return new PostureApplyResult(false, false, previous, previous, "driver", driverMessage);
             }
 
             var registryMessage = UpdateConvertibleSlateModeRegistry(targetMode);
@@ -81,48 +84,13 @@ internal sealed class SurfacePostureController : IPostureController
         }
     }
 
-    private bool TryToggleGpioLaptopSlateIndicator(SurfaceMode targetMode, out string? devicePath, out string message)
+    private bool TryToggleSurfacePostureDriver(SurfaceMode targetMode, out string message)
     {
-        devicePath = null;
-        message = string.Empty;
-
-        if (!TryFindDeviceInterfacePath(LaptopSlateInterfaceGuid, out var path))
+        if (SurfacePostureDriverClient.TryApply(targetMode, out message))
         {
-            message = "GPIO laptop/slate interface not present; using registry fallback.";
-            return false;
-        }
-
-        devicePath = path;
-        try
-        {
-            using var handle = NativeMethods.CreateFile(
-                devicePath,
-                NativeMethods.GenericWrite,
-                NativeMethods.FileShareReadWrite,
-                IntPtr.Zero,
-                NativeMethods.FileModeOpen,
-                NativeMethods.FileFlagsAndAttributesNormal,
-                IntPtr.Zero);
-
-            if (handle.IsInvalid)
-            {
-                message = $"Failed to open {devicePath}: {new Win32Exception(Marshal.GetLastWin32Error()).Message}";
-                return false;
-            }
-
-            using var stream = new FileStream(handle, FileAccess.Write);
-            stream.WriteByte(targetMode == SurfaceMode.Tablet ? (byte)0x00 : (byte)0x01);
-            stream.Flush(true);
-
-            BroadcastConvertibleSlateModeChange();
-            message = $"Toggled Microsoft GPIO laptop/slate indicator via {devicePath}.";
             return true;
         }
-        catch (Exception ex)
-        {
-            message = $"GPIO indicator write failed for {devicePath}: {ex.Message}";
-            return false;
-        }
+        return false;
     }
 
     private static string UpdateConvertibleSlateModeRegistry(SurfaceMode targetMode)
@@ -156,71 +124,6 @@ internal sealed class SurfacePostureController : IPostureController
         }
     }
 
-    private static bool TryFindDeviceInterfacePath(Guid interfaceGuid, [NotNullWhen(true)] out string? devicePath)
-    {
-        devicePath = null;
-
-        var deviceInfo = NativeMethods.SetupDiGetClassDevs(
-            ref interfaceGuid,
-            null,
-            IntPtr.Zero,
-            NativeMethods.DigcfDeviceinterface | NativeMethods.DigcfPresent);
-
-        if (deviceInfo == NativeMethods.InvalidHandleValue)
-        {
-            return false;
-        }
-
-        try
-        {
-            var interfaceData = new NativeMethods.SpDeviceInterfaceData
-            {
-                CbSize = Marshal.SizeOf<NativeMethods.SpDeviceInterfaceData>()
-            };
-
-            for (var index = 0; NativeMethods.SetupDiEnumDeviceInterfaces(deviceInfo, IntPtr.Zero, ref interfaceGuid, index, ref interfaceData); index++)
-            {
-                if (!NativeMethods.SetupDiGetDeviceInterfaceDetail(deviceInfo, ref interfaceData, IntPtr.Zero, 0, out var requiredSize, IntPtr.Zero))
-                {
-                    var error = Marshal.GetLastWin32Error();
-                    if (error != NativeMethods.ErrorInsufficientBuffer)
-                    {
-                        continue;
-                    }
-                }
-
-                var detailBuffer = Marshal.AllocHGlobal((int)requiredSize);
-                try
-                {
-                    var cbSize = IntPtr.Size == 8 ? 8 : 6;
-                    Marshal.WriteInt32(detailBuffer, cbSize);
-
-                    if (!NativeMethods.SetupDiGetDeviceInterfaceDetail(deviceInfo, ref interfaceData, detailBuffer, requiredSize, out _, IntPtr.Zero))
-                    {
-                        continue;
-                    }
-
-                    var pathOffset = IntPtr.Size == 8 ? 8 : 6;
-                    var candidate = Marshal.PtrToStringUni(IntPtr.Add(detailBuffer, pathOffset));
-                    if (!string.IsNullOrWhiteSpace(candidate))
-                    {
-                        devicePath = candidate;
-                        return true;
-                    }
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(detailBuffer);
-                }
-            }
-
-            return false;
-        }
-        finally
-        {
-            NativeMethods.SetupDiDestroyDeviceInfoList(deviceInfo);
-        }
-    }
 }
 
 internal static class NativeMethods
@@ -280,6 +183,25 @@ internal static class NativeMethods
         uint dwCreationDisposition,
         uint dwFlagsAndAttributes,
         IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool WriteFile(
+        SafeFileHandle hFile,
+        byte[] lpBuffer,
+        int nNumberOfBytesToWrite,
+        out int lpNumberOfBytesWritten,
+        IntPtr lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool DeviceIoControl(
+        SafeFileHandle hDevice,
+        uint dwIoControlCode,
+        IntPtr lpInBuffer,
+        int nInBufferSize,
+        byte[] lpOutBuffer,
+        int nOutBufferSize,
+        out int lpBytesReturned,
+        IntPtr lpOverlapped);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr SendMessageTimeout(
