@@ -25,7 +25,7 @@ static VOID SurfacePosturePublishChild(_In_ WDFDEVICE Device)
     WdfChildListEndScan(childList);
 }
 
-static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit)
+static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit, _Out_ WDFDEVICE* ChildDevice)
 {
     UNICODE_STRING deviceId;
     UNICODE_STRING hardwareId;
@@ -76,6 +76,21 @@ static NTSTATUS SurfacePostureInitializeChildInit(_In_ PWDFDEVICE_INIT ChildInit
         return status;
     }
 
+    WDF_OBJECT_ATTRIBUTES childAttributes;
+    WDF_OBJECT_ATTRIBUTES_INIT(&childAttributes);
+
+    status = WdfDeviceCreate(&ChildInit, &childAttributes, ChildDevice);
+    if (!NT_SUCCESS(status))
+    {
+        KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "SurfacePostureDriver: failed to create child PDO status=0x%08X\n",
+            status));
+        return status;
+    }
+
+    KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+        "SurfacePostureDriver: created child PDO Root\\SurfacePostureIndicator\n"));
+
     return STATUS_SUCCESS;
 }
 
@@ -88,13 +103,14 @@ NTSTATUS SurfacePostureEvtChildListCreateDevice(
 
     PSURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION childDescription =
         CONTAINING_RECORD(IdentificationDescription, SURFACE_POSTURE_CHILD_IDENTIFICATION_DESCRIPTION, Header);
+    WDFDEVICE childDevice = NULL;
 
     if (childDescription->ChildIndex != SURFACE_POSTURE_CHILD_INDEX)
     {
         return STATUS_INVALID_PARAMETER;
     }
 
-    return SurfacePostureInitializeChildInit(ChildInit);
+    return SurfacePostureInitializeChildInit(ChildInit, &childDevice);
 }
 
 BOOLEAN SurfacePostureEvtChildListIdentificationDescriptionCompare(

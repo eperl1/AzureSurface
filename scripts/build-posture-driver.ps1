@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Configuration = "Release",
     [string]$Platform = "x64",
     [string]$OutputPath = (Join-Path $PSScriptRoot '..\artifacts\windows\SurfacePostureDriver'),
@@ -91,7 +91,7 @@ function Copy-DriverPayload {
 }
 
 $msbuild = Get-MSBuildPath
-& $msbuild $project /t:Build /p:Configuration=$Configuration /p:Platform=$Platform /p:OutDir="$driverBuildDir\" /p:SkipPackageVerification=true /p:ApiValidator_Enable=false /p:EnableInf2cat=false
+& $msbuild $project /t:Build /p:Configuration=$Configuration /p:Platform=$Platform /p:OutDir="$driverBuildDir/" /p:SkipPackageVerification=true /p:ApiValidator_Enable=false /p:EnableInf2cat=false
 if ($LASTEXITCODE -ne 0) {
     throw "MSBuild failed with exit code $LASTEXITCODE."
 }
@@ -138,3 +138,4 @@ Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $artifactZip
 Write-Host "SurfacePostureDriver package created at $artifactZip"
 Write-Host "Staging directory: $packageDir"
 Write-Host "Certificate: $cerPath"
+

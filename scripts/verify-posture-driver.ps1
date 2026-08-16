@@ -26,6 +26,35 @@ if (-not $device) {
     }
 }
 
+if ($device) {
+    $relations = & pnputil /enum-devices /instanceid "$($device.InstanceId)" /relations
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to enumerate relations for $($device.InstanceId)."
+    }
+
+    $child = Get-PnpDevice -PresentOnly:$false | Where-Object {
+        $_.InstanceId -match '^ROOT\\SURFACEPOSTUREINDICATOR\\' -or
+        $_.FriendlyName -eq 'Surface Posture Indicator'
+    } | Select-Object -First 1
+
+    if (-not $child) {
+        throw 'SurfacePostureDriver child device was not present after installation.'
+    }
+
+    if ($relations -notmatch [regex]::Escape($child.InstanceId) -and $relations -notmatch 'SurfacePostureIndicator') {
+        throw "SurfacePostureDriver child $($child.InstanceId) was not shown in the parent relations."
+    }
+
+    $childDetails = & pnputil /enum-devices /instanceid "$($child.InstanceId)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to enumerate child device $($child.InstanceId)."
+    }
+
+    if ($childDetails -notmatch 'PNP0C60') {
+        throw "SurfacePostureDriver child $($child.InstanceId) does not advertise compatible ID PNP0C60."
+    }
+}
+
 if ($BearerToken) {
     $body = @{
         command = 'PING'
