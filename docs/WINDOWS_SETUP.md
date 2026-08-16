@@ -7,6 +7,7 @@
 - accepts only `TABLET`, `LAPTOP`, and `PING`
 - logs every request without logging the token
 - opens or hides the Windows touch keyboard using best-effort software control
+- tries Microsoft’s supported GPIO laptop/slate indicator path before falling back to the existing registry-and-broadcast behavior
 
 ## Install
 
@@ -14,6 +15,7 @@
 2. Copy the zip to the Azure VM.
 3. Extract it somewhere stable, such as `C:\Program Files\SurfaceModeReceiver`.
 4. Run `scripts\install-windows-receiver.ps1` from an elevated PowerShell session if you want the startup shortcut and firewall rule created automatically.
+5. Use `docs/WINDOWS_POSTURE.md` for posture verification and rollback details.
 
 ## Startup
 
@@ -23,6 +25,8 @@ The install script:
 - creates a Startup-folder shortcut
 - adds an inbound firewall rule for the default control port
 - starts the receiver
+
+If the Windows GPIO laptop/slate indicator device exists on the VM, the receiver will use it automatically when `TABLET` and `LAPTOP` commands arrive.
 
 ## Token
 
@@ -34,6 +38,14 @@ Paste that token into the iPad app settings.
 ## Firewall
 
 If you prefer to manage the firewall manually, allow inbound TCP on the configured control port only from your private network or Tailscale interface.
+
+## Posture verification
+
+The supported convertible path is documented in [Windows Posture](WINDOWS_POSTURE.md). The short version is:
+
+- confirm the Microsoft `GPIO Laptop or Slate Indicator Driver` is present
+- send `TABLET` and `LAPTOP` requests to the receiver
+- check the receiver log for the posture backend it used
 
 ## Logs
 

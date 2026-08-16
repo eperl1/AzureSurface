@@ -1,7 +1,8 @@
 param(
     [string]$SourcePath = (Join-Path $PSScriptRoot '..\windows\SurfaceModeReceiver\bin\Release\publish'),
     [string]$InstallPath = "$env:ProgramFiles\SurfaceModeReceiver",
-    [int]$Port = 47889
+    [int]$Port = 47889,
+    [switch]$NoStart
 )
 
 $SourcePath = (Resolve-Path $SourcePath).Path
@@ -27,7 +28,13 @@ if (-not (Get-NetFirewallRule -DisplayName 'SurfaceModeReceiver' -ErrorAction Si
     New-NetFirewallRule -DisplayName 'SurfaceModeReceiver' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port | Out-Null
 }
 
-Start-Process -FilePath $exe -WorkingDirectory $InstallPath
+if (-not $NoStart) {
+    $existing = Get-CimInstance Win32_Process -Filter "Name = 'SurfaceModeReceiver.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -eq $exe }
+    if (-not $existing) {
+        Start-Process -FilePath $exe -WorkingDirectory $InstallPath
+    }
+}
 
 Write-Host "Installed SurfaceModeReceiver to $InstallPath"
 Write-Host "Startup shortcut created at $shortcutPath"

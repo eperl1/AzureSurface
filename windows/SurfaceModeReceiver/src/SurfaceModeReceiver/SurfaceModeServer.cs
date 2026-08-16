@@ -14,7 +14,8 @@ internal sealed class SurfaceModeServer : IDisposable
     private readonly ReceiverConfig _config;
     private readonly ReceiverLog _log;
     private readonly ModeStateMachine _stateMachine;
-    private readonly TouchKeyboardController _keyboardController = new();
+    private readonly TouchKeyboardController _keyboardController;
+    private readonly IPostureController _postureController;
     private WebApplication? _app;
     private Task? _runTask;
     private readonly object _gate = new();
@@ -22,9 +23,16 @@ internal sealed class SurfaceModeServer : IDisposable
     public event EventHandler<ReceiverStateSnapshot>? StateChanged;
 
     public SurfaceModeServer(ReceiverConfig config, ReceiverLog log)
+        : this(config, log, new TouchKeyboardController(), new SurfacePostureController(log))
+    {
+    }
+
+    internal SurfaceModeServer(ReceiverConfig config, ReceiverLog log, TouchKeyboardController keyboardController, IPostureController postureController)
     {
         _config = config;
         _log = log;
+        _keyboardController = keyboardController;
+        _postureController = postureController;
         _stateMachine = new ModeStateMachine(TimeSpan.FromSeconds(Math.Max(30, config.NonceRetentionSeconds)));
     }
 
@@ -53,7 +61,7 @@ internal sealed class SurfaceModeServer : IDisposable
         });
 
         var app = builder.Build();
-        app.MapPost("/api/mode", HandleModeRequestAsync);
+        app.MapPost("/api/mode", (Func<HttpContext, Task<IResult>>)HandleModeRequestAsync);
 
         lock (_gate)
         {
@@ -169,6 +177,13 @@ internal sealed class SurfaceModeServer : IDisposable
 
         if (result.Ok && result.Changed)
         {
+            var postureResult = _postureController.Apply(result.CurrentMode);
+            _log.Info(source, $"posture_{postureResult.Path}",
+                result.PreviousMode.ToString(),
+                postureResult.CurrentMode.ToString(),
+                postureResult.Ok,
+                postureResult.Message);
+
             if (command == ModeCommand.Tablet)
             {
                 _keyboardController.Show();

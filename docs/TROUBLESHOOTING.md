@@ -12,6 +12,8 @@
 - Make sure the iPad app has a host, port, and token saved.
 - Open the iPad app settings and use `Test Connection`.
 - Check the Windows receiver log file.
+- If the log says `registry` instead of `gpio`, the VM does not currently expose the Microsoft laptop/slate indicator path.
+- Use the checks in [Windows Posture](WINDOWS_POSTURE.md) to confirm whether the GPIO device exists.
 
 ## The touch keyboard does not open
 
@@ -21,8 +23,8 @@
 
 ## The app does not look like it changed mode
 
-- This project does not rely on undocumented registry hacks to force genuine hardware convertible mode.
-- The Windows receiver only recreates the parts of the tablet experience that can be changed safely from software.
+- The Windows receiver now tries the supported GPIO indicator path first.
+- If the VM firmware does not expose `PNP0C60`, the app falls back to the registry-and-broadcast behavior and cannot become a true convertible on its own.
 
 ## Signing fails on GitHub Actions
 

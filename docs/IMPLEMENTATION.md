@@ -21,6 +21,8 @@ These files are copied into the upstream FreeRDP iOS tree during the build:
 - `ios/scripts/build-freerdp-ios.sh`
 - `scripts/build-windows.ps1`
 - `scripts/install-windows-receiver.ps1`
+- `scripts/uninstall-windows-receiver.ps1`
+- `docs/WINDOWS_POSTURE.md`
 
 ## Windows receiver
 
@@ -33,6 +35,7 @@ These files are copied into the upstream FreeRDP iOS tree during the build:
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/NetworkBindingResolver.cs`
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/TouchKeyboardController.cs`
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfaceModeServer.cs`
+- `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/SurfacePostureController.cs`
 - `windows/SurfaceModeReceiver/src/SurfaceModeReceiver/Properties/AssemblyInfo.cs`
 
 ## Tests

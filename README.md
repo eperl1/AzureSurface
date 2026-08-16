@@ -11,6 +11,7 @@ The repo contains:
 - a Windows 11 receiver written in C#/.NET
 - GitHub Actions workflows for unsigned iOS builds, signed iOS builds, and Windows builds
 - setup and signing documentation
+- Windows posture install, verify, and rollback guidance
 
 ## What this project does
 
@@ -22,6 +23,7 @@ The repo contains:
   - rejects stale or duplicate requests
   - logs mode transitions
   - shows/hides the Windows touch keyboard
+  - tries the supported Windows GPIO laptop/slate indicator path when available
   - keeps duplicate tablet/laptop events idempotent
 
 ## Architecture
@@ -57,5 +59,6 @@ The repo contains:
 - [Setup](docs/SETUP.md)
 - [Apple Signing](docs/APPLE_SIGNING.md)
 - [Windows Setup](docs/WINDOWS_SETUP.md)
+- [Windows Posture](docs/WINDOWS_POSTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 
